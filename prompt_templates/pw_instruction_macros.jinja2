@@ -1,0 +1,48 @@
+{% macro zero_three_instr(n_labels) %}
+3 - The passage is highly relevant and directly on-point. The passage precisely responds to the query and not a similar but different topic.
+
+2 - The passage is partially relevant, as it may be on topic but does not address the entirety of the query.
+
+1 - The passage is completely non-relevant. The passage might be on the same or similar topic as the one of the query, but the passage does not answer the question and does not satisfy the information need.
+
+0 - The passage is off-topic and totally unrelated to the information need of the passage.
+{% endmacro %}
+
+{% macro umbrella_instr(n_labels) %}
+3 - The passage is dedicated to the query and contains the exact answer.
+
+2 - The passage has some answer for the query, but the answer may be a bit unclear, or hidden amongst extraneous information.
+
+1 - The passage seems related to the query but does not answer it.
+
+0 - The passage has nothing to do with the query.
+{% endmacro %}
+
+
+{% macro num_instr(n_labels) %}
+Each label is an integer score between 0 and {{n_labels}}, where 0 represents that the passage is completely non-relevant to the query and {{n_labels}} represents that the passage is highly relevant to the query.
+{% endmacro %}
+
+{% macro RAG_eval_zero_ten_instr(n_labels) %}
+10: Perfect match, addresses all aspects of the query comprehensively
+
+9: Excellent match, covers almost all aspects of the query in detail
+
+8: Very good match, addresses most aspects of the query
+
+7: Good match, covers several key aspects of the query
+
+6: Above average match, addresses some important aspects of the query
+
+5: Average match, partially relevant to the query
+
+4: Below average match, touches on the query topic but lacks depth
+
+3: Poor match, only marginally related to the query
+
+2: Very poor match, barely relevant to the query
+
+1: Extremely poor match, only contains a keyword or phrase from the query
+
+0: Completely irrelevant, no connection to the query
+{% endmacro %}

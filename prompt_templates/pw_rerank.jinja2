@@ -1,0 +1,33 @@
+{% from 'pw_instruction_macros.jinja2' import zero_three_instr, num_instr, RAG_eval_zero_ten_instr, umbrella_instr %}
+Assign one of the labels (i.e., integer scores) below to each of the {{list_len}} passages based on its relevance to the query. Following the order of the passages below, output your answer as only a list of {{list_len}} labels.
+
+<Label Instructions>
+{% if label_macro_name == "zero_three_instr" %}
+    {{ zero_three_instr(n_labels) }} 
+{% elif label_macro_name == "num_instr" %}
+    {{ num_instr(n_labels) }} 
+{% elif label_macro_name == "RAG_eval_zero_ten_instr" %}
+    {{ RAG_eval_zero_ten_instr(n_labels) }}
+{% elif label_macro_name == "umbrella_instr" %}
+    {{ umbrella_instr(n_labels) }}  
+{% endif %}
+</Label Instructions>
+
+<Query>
+{{query}}
+</Query>
+
+<Passages>
+{% for pid in local_p_ids %}
+  {{ pid }}: {{ p_texts[loop.index0] }}
+{% endfor %}
+</Passages>
+
+<Example Output Format>
+[<score for p1>, <score for p2>, ...]
+</Example Output Format>
+
+<Output>
+
+
+
