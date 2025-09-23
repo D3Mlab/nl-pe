@@ -1,0 +1,15 @@
+boto3==1.40.36
+botocore==1.40.36
+fpdf==1.7.2
+Jinja2==3.1.6
+langchain_core==0.3.76
+matplotlib==3.10.6
+numpy==2.3.3
+openai==1.108.2
+pandas==2.3.2
+protobuf==6.32.1
+python-dotenv==1.1.1
+pytrec_eval==0.5
+PyYAML==6.0.2
+scikit_learn==1.7.2
+scipy==1.16.2
