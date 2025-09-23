@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from llm_passage_ranking.utils.setup_logging import setup_logging
+from nl_pe.utils.setup_logging import setup_logging
 import json
 import os
 from pyserini.search.lucene import LuceneSearcher

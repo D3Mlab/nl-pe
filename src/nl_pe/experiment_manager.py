@@ -1,11 +1,11 @@
 import yaml
 import json
 import argparse
-from llm_passage_ranking import search_agent
+from nl_pe import search_agent
 from dotenv import load_dotenv
-from llm_passage_ranking.dataloading import LOADER_CLASSES
+from nl_pe.dataloading import LOADER_CLASSES
 import os
-from llm_passage_ranking.utils.setup_logging import setup_logging
+from nl_pe.utils.setup_logging import setup_logging
 from pathlib import Path
 import math
 #import time

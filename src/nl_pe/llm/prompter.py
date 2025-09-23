@@ -1,9 +1,9 @@
 import json
 import re
 import jinja2
-from llm_passage_ranking.utils.setup_logging import setup_logging
-from llm_passage_ranking.utils.utils import *
-from llm_passage_ranking.llm import LLM_CLASSES
+from nl_pe.utils.setup_logging import setup_logging
+from nl_pe.utils.utils import *
+from nl_pe.llm import LLM_CLASSES
 import argparse
 import yaml
 import os

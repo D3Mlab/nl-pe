@@ -1,6 +1,6 @@
 import os
 import argparse
-from llm_passage_ranking.experiment_manager import ExperimentManager
+from nl_pe.experiment_manager import ExperimentManager
 from dotenv import load_dotenv
 
 def run_experiment_batch(batch_dir):

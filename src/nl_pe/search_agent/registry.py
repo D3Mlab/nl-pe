@@ -1,8 +1,8 @@
 # registry.py
-from llm_passage_ranking.search_agent.general_agent import GeneralAgent
-from llm_passage_ranking.llm.prompter import Prompter
-from llm_passage_ranking.search_agent.policies import PipelinePolicy
-from llm_passage_ranking.utils.utils import AgentLogic
+from nl_pe.search_agent.general_agent import GeneralAgent
+from nl_pe.llm.prompter import Prompter
+from nl_pe.search_agent.policies import PipelinePolicy
+from nl_pe.utils.utils import AgentLogic
 
 AGENT_CLASSES = {
     'GeneralAgent': GeneralAgent,

@@ -1,0 +1,10 @@
+llm:
+  model_class: OpenAILLM
+  model_name: tbd
+  temperature: 1
+  num_retries: 3
+logging:
+  level: DEBUG
+templates:
+  template_dir: prompt_templates
+

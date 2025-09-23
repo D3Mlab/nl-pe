@@ -1,7 +1,7 @@
 
 from abc import ABC, abstractclassmethod, abstractmethod
 #from search_agent import COMPONENT_CLASSES
-from llm_passage_ranking.utils.setup_logging import setup_logging
+from nl_pe.utils.setup_logging import setup_logging
 
 class BasePolicy(ABC):
 

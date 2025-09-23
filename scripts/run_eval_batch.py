@@ -1,6 +1,6 @@
 import os
 import argparse
-from llm_passage_ranking.eval_manager import EvalManager
+from nl_pe.eval_manager import EvalManager
 from dotenv import load_dotenv
 
 def run_eval_batch(e, skip_existing):

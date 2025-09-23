@@ -1,6 +1,6 @@
-from llm_passage_ranking.utils.setup_logging import setup_logging
-from llm_passage_ranking.search_agent.base_agent import BaseAgent
-from llm_passage_ranking.utils.utils import AgentLogic
+from nl_pe.utils.setup_logging import setup_logging
+from nl_pe.search_agent.base_agent import BaseAgent
+from nl_pe.utils.utils import AgentLogic
 #import types
 import copy
 

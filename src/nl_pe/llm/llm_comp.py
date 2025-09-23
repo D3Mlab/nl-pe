@@ -10,13 +10,11 @@ from google.api_core.exceptions import GoogleAPICallError, RetryError, InvalidAr
 import random
 import google
 import argparse
-from langchain_core.messages import SystemMessage, HumanMessage
 import boto3
 import json
 from botocore.config import Config
 from typing import Optional
-
-from llm_passage_ranking.utils.setup_logging import setup_logging
+from nl_pe.utils.setup_logging import setup_logging
 
 class BaseLLM(ABC):
 

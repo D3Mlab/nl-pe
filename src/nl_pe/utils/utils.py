@@ -1,16 +1,12 @@
 import json
 import os
 import math
-from llm_passage_ranking.utils.setup_logging import setup_logging
+from nl_pe.utils.setup_logging import setup_logging
 import random
 from copy import deepcopy
 from math import prod
 from collections import Counter
 import numpy as np
-from llm_passage_ranking.aggregator.base import *
-from llm_passage_ranking.aggregator.approximate import *
-from llm_passage_ranking.aggregator.exact import *
-from llm_passage_ranking.aggregator.utils import *
 from sklearn.linear_model import LinearRegression
 import pandas as pd
 

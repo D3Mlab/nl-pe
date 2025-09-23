@@ -7,11 +7,11 @@ import json
 import numpy as np
 from scipy.stats import norm
 from fpdf import FPDF
-from llm_passage_ranking.utils.setup_logging import setup_logging
-from llm_passage_ranking.utils.utils import get_doc_text_list
+from nl_pe.utils.setup_logging import setup_logging
+from nl_pe.utils.utils import get_doc_text_list
 import unicodedata
 from pathlib import Path
-from llm_passage_ranking.llm.prompter import Prompter
+from nl_pe.llm.prompter import Prompter
 from sklearn.metrics import average_precision_score
 from sklearn.linear_model import LinearRegression
 import warnings

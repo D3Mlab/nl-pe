@@ -2,18 +2,19 @@
 import os
 import yaml
 from dotenv import load_dotenv
-from llm_passage_ranking.llm import LLM_CLASSES
-from llm_passage_ranking.llm.prompter import Prompter
+from nl_pe.llm import LLM_CLASSES
+from nl_pe.llm.prompter import Prompter
+from pathlib import Path
 
 #tester code for llms
 #should run as module: >python -m llm
 if __name__ == "__main__":
 
-    config_path = os.path.join(os.path.dirname(__file__), 'config.yaml')
+    config_path = Path('configs/llm/config.yaml')
     with open(config_path, 'r') as config_file:
         config = yaml.safe_load(config_file)
 
-    load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
+    load_dotenv()
 
     prompter = Prompter(config)
 
