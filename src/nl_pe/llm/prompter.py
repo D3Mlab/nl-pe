@@ -6,9 +6,7 @@ from nl_pe.utils.utils import *
 from nl_pe.llm import LLM_CLASSES
 import argparse
 import yaml
-import os
 from dotenv import load_dotenv
-import time
 
 class Prompter():
     
@@ -25,169 +23,7 @@ class Prompter():
 
         model_class = LLM_CLASSES.get(self.model_class_name)
         self.llm = model_class(config,self.model_name)
-
         self.jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader(searchpath=self.template_dir))
-
-    def lw_rerank(self, state):
-
-        if state["current_batch"] == None:
-            return
-
-        instance = state['instance']
-        query = instance["query"]["text"]
-        psg_list_batch = state["current_batch"]
-
-        #if config['data']['use_local_p_ids'], get simplified p_ids (e.g. 'p1' instead of '1k43hj2f53l345')
-        #local_psgs = {<local_p_id>: {p_id: __, text: __},...}
-        local_psgs = self.get_local_psgs(psg_list_batch)
-
-        k = len(local_psgs)
-
-        prompt_dict = {
-            'query' : query,
-            'local_p_ids' : list(local_psgs.keys()),
-            'p_texts' : [psg["text"] for psg in instance["psg_list"]],
-            'k': k
-        }
-
-        template_dir = self.template_config["lw_rerank"]
-        prompt = self.render_prompt(prompt_dict, template_dir)
-
-        llm_response = self.llm.prompt(prompt)
-        llm_output = llm_response["message"]
-        self.add_response_to_state(state,llm_output)
-        self.add_prompt_tokens_to_state(state,llm_response)
-        
-        #list of strings (pids) that can contain duplicates and non-existent pids 
-        raw_batch_pids = self.parse_llm_list_lw(llm_output)
-
-        #if pad = False, output list may be shorter than batch size
-        pad = self.config['rerank'].get('lw_padding', False)
-
-        self.update_lw_pid_outputs(state,raw_batch_pids, local_psgs, pad)
-
-        duration = llm_response["prompt_time"]
-        self.logger.debug(f"lw_rerank duration: {duration}")
-        if 'prompting_runtimes' not in state:
-            state['prompting_runtimes'] = []
-        state['prompting_runtimes'].append(duration)
-
-
-    def update_lw_pid_outputs(self,state,raw_batch_pids, local_psgs, pad):
-        # processes parsed pids for hallucinations and duplicates and writes results to state
-        self.logger.debug(f"lw_rerank raw_batch_pids: {raw_batch_pids}")
-        if 'raw_batch_local_pid_lists' not in state:
-            state['raw_batch_local_pid_lists'] = []
-        state['raw_batch_local_pid_lists'].append(raw_batch_pids)
-
-        seen_pids = set()
-        valid_pid_list = []
-        duplicated_pids = []
-        nonexistent_pids = []
-        for raw_pid in raw_batch_pids:
-            if raw_pid in local_psgs:
-                pid = local_psgs[raw_pid]['pid']
-                if pid not in seen_pids:
-                    seen_pids.add(pid)
-                    valid_pid_list.append(pid)
-                else:
-                    duplicated_pids.append(pid)
-            else:
-                nonexistent_pids.append(raw_pid)
-
-        if 'duplicated_batch_pid_lists' not in state:
-            state['duplicated_batch_pid_lists'] = []
-        state['duplicated_batch_pid_lists'].append(duplicated_pids)
-
-        if 'nonexistent_batch_pid_lists' not in state:
-            state['nonexistent_batch_pid_lists'] = []
-        state['nonexistent_batch_pid_lists'].append(nonexistent_pids)
-
-        if 'valid_batch_pid_lists' not in state:
-            state['valid_batch_pid_lists'] = []
-
-        if pad == False:
-            state['valid_batch_pid_lists'].append(valid_pid_list)
-            return
-        else:
-            # get the pids from the batch that are missing from valid_pid_list and append them to the end of valid_pid_list in the order those passages occured.
-            remaining_pids = [
-                psg["pid"] for psg in state["current_batch"]
-                if psg["pid"] not in seen_pids
-            ]
-            n_pads = len(remaining_pids)
-            if n_pads > 0:
-                self.logger.warning(f"Padding required: {n_pads}")
-            valid_pid_list.extend(remaining_pids)
-            state['valid_batch_pid_lists'].append(valid_pid_list)
-
-            if 'padding_batch_pid_lists' not in state:
-                state['padding_batch_pid_lists'] = []
-            state['padding_batch_pid_lists'].append(remaining_pids)
-
-    def pw_rerank(self, state):
-
-        if state["current_batch"] == None:
-            return
-
-        instance = state['instance']
-        query = instance["query"]["text"]
-
-        psg_list_batch = state["current_batch"]
-
-        # Get local passages for the batch using simple pIDs (e.g. 'p1' instead of '1k43hj2f53l345')
-        #local_psgs = {<local_p_id>: {p_id: __, text: __},...}
-        local_psgs = self.get_local_psgs(psg_list_batch)
-
-        #get label descriptions (e.g. "3 is highly relevant...", etc)
-        label_macro_name = self.config['templates'].get('label_macro_name')
-        n_labels = self.config['templates'].get('n_labels')
-        list_len = len(local_psgs)
-
-        prompt_dict = {
-            'query' : query,
-            'local_p_ids' : list(local_psgs.keys()),
-            'p_texts' : [psg["text"] for psg in psg_list_batch],
-            'label_macro_name': label_macro_name,
-            'n_labels': n_labels,
-            'list_len': list_len
-        }
-
-        template_dir = self.template_config["pw_rerank"]
-        prompt = self.render_prompt(prompt_dict, template_dir)
-
-        llm_response = self.llm.prompt(prompt)
-        llm_output = llm_response["message"]
-        self.add_response_to_state(state,llm_output)
-        self.add_prompt_tokens_to_state(state,llm_response)
-
-        scores = self.parse_llm_list_pw(llm_output)
-        scores = [int(score) for score in scores]
-
-        if 'batch_scores' not in state:
-            state['batch_scores'] = []
-        state['batch_scores'].append(scores)
-
-        self.logger.debug(f"pw_rerank scores: {scores}")
-
-        # Ensure pid_to_score_dict exists in state
-        if "pid_to_score_dict" not in state:
-            state["pid_to_score_dict"] = {}
-
-        for pid in [psg["pid"] for psg in psg_list_batch]:
-            if pid not in state["pid_to_score_dict"]:
-                state["pid_to_score_dict"][pid] = []    
-
-        # Extend the scores for the pids in the batch
-        for pid, score in zip([psg["pid"] for psg in psg_list_batch], scores):
-            state["pid_to_score_dict"][pid].append(score)
-
-        duration = llm_response["prompt_time"]
-        self.logger.debug(f"pw_rerank duration: {duration}")
-
-        if 'prompting_runtimes' not in state:
-            state['prompting_runtimes'] = []
-        state['prompting_runtimes'].append(duration)
 
 
     def add_prompt_to_state(self,state,prompt):
@@ -207,46 +43,65 @@ class Prompter():
             state["prompt_tokens"].append(llm_response['prompt_tokens'])
 
 
+    def prompt(self, prompt):
+        """
+        Generic method to call the LLM with a prompt and return just the text response.
+
+        Args:
+            prompt (str): The prompt string to send to the LLM
+
+        Returns:
+            str: The text response from the LLM
+        """
+        llm_response = self.llm.prompt(prompt)
+        return llm_response["message"]
+
     def render_prompt(self, prompt_dict, template_dir):
         template = self.jinja_env.get_template(template_dir)
         return template.render(prompt_dict)
 
-    def parse_llm_list_pw(self, llm_output):
-        # Try parsing the LLM output using JSON list reader
+    def parse_llm_json(self, llm_output, add_p_prefix=False):
+        """
+        Generic method to parse any JSON output from LLM, with optional passage ID prefixing.
+
+        Args:
+            llm_output (str): The raw output from the LLM
+            add_p_prefix (bool): Whether to add "p" prefix to items that don't start with "p"
+
+        Returns:
+            list: Parsed list from the LLM output, or empty list if parsing fails
+        """
+        # Try parsing the LLM output as direct JSON first
         try:
             return json.loads(llm_output)
         except json.JSONDecodeError:
-            #self.logger.debug(f"Could not parse LLM output as list using regex parsing to look for list in LLM output: {llm_output}")
+            # Fallback to regex parsing to find JSON-like structures
             try:
+                # Look for array patterns: [item1, item2, ...]
                 match = re.search(r'\[.*?\]', llm_output, re.DOTALL)
                 if match:
-                    # Extract and convert single-quoted strings to double quotes for JSON compatibility
-                    extracted_list = match.group(0).replace("'", '"')
-                    return json.loads(extracted_list)
+                    extracted_json = match.group(0)
+                    # Convert single-quoted strings to double quotes for JSON compatibility
+                    extracted_json = extracted_json.replace("'", '"')
+                    # Handle common JSON formatting issues
+                    extracted_json = re.sub(r',\s*}', '}', extracted_json)  # Remove trailing commas
+                    extracted_json = re.sub(r',\s*]', ']', extracted_json)  # Remove trailing commas
+
+                    parsed_list = json.loads(extracted_json)
+
+                    # Apply p prefixing if requested
+                    if add_p_prefix and isinstance(parsed_list, list):
+                        parsed_list = [item if str(item).startswith("p") else f"p{item}" for item in parsed_list]
+
+                    return parsed_list
                 else:
-                    self.logger.warning(f"No valid regex list found in LLM output: {llm_output}")
+                    self.logger.warning(f"Failed to parse LLM output as JSON: {llm_output}")
                     return []
             except Exception as e:
-                self.logger.warning(f"Regex extraction failed to parse as JSON: {e}")
+                self.logger.warning(f"Failed to parse LLM output as JSON: {e}")
                 return []
         except Exception as e:
-            self.logger.warning(f"No valid list found in LLM output: {e}")
-            return []
-        
-    def parse_llm_list_lw(self, llm_output):
-        try:
-            match = re.search(r'\[([^\]]+)\]', llm_output)
-            if match:
-                extracted_list = match.group(1)
-                items = [item.strip().strip('"').strip("'") for item in extracted_list.split(',')]
-                # Prepend "p" to items that do not start with "p", e,g, "2" becomes "p2"
-                items = [item if item.startswith("p") else f"p{item}" for item in items]
-                return items
-            else:
-                self.logger.warning(f"No valid regex list found in LLM output: {llm_output}")
-                return []
-        except Exception as e:
-            self.logger.warning(f"Error extracting list: {e}")
+            self.logger.warning(f"Failed to parse LLM output as JSON: {e}")
             return []
     
     def get_local_psgs(self, psg_list):        
@@ -346,4 +201,3 @@ if __name__ == "__main__":
     #}
     #prompter.update_lw_pid_outputs(state, raw_batch_pids, local_psgs, pad=True)
     #print("Updated state:", state)
-

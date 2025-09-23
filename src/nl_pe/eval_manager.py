@@ -830,26 +830,10 @@ class EvalManager:
         return average_precision_score(labels, probs)
 
     def parse_llm_list(self, llm_output):
-        # Try parsing the LLM output using JSON list reader
-        try:
-            return json.loads(llm_output)
-        except json.JSONDecodeError:
-            #self.logger.debug(f"Could not parse LLM output as list using regex parsing to look for list in LLM output: {llm_output}")
-            try:
-                match = re.search(r'\[.*?\]', llm_output, re.DOTALL)
-                if match:
-                    # Extract and convert single-quoted strings to double quotes for JSON compatibility
-                    extracted_list = match.group(0).replace("'", '"')
-                    return json.loads(extracted_list)
-                else:
-                    self.logger.warning(f"No valid regex list found in LLM output: {llm_output}")
-                    return []
-            except Exception as e:
-                self.logger.warning(f"Regex extraction failed to parse as JSON: {e}")
-                return []
-        except Exception as e:
-            self.logger.warning(f"No valid list found in LLM output: {e}")
-            return []
+        # Use the generic JSON parsing method from Prompter
+        # Create a temporary prompter instance just for parsing
+        temp_prompter = Prompter({})
+        return temp_prompter.parse_llm_json(llm_output)
         
 
 warnings.filterwarnings("ignore", message="No positive class found in y_true, recall is set to one for all thresholds.")
