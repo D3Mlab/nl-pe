@@ -106,9 +106,9 @@ class Prompter():
                 state["prompt_tokens"] = []  
             state["prompt_tokens"].append(llm_response['prompt_tokens'])
 
-    def prompt_from_temp(self,template_path):
-        prompt = self.render_prompt(template_path=template_path)
-        self.prompt_from_str(prompt)
+    def prompt_from_temp(self,template_path, prompt_dict = {}):
+        prompt = self.render_prompt(prompt_dict, template_path)
+        return self.prompt_from_str(prompt)
 
     def prompt_from_str(self, prompt):
         """
@@ -120,69 +120,14 @@ class Prompter():
         Returns:
             dict: The full response from the LLM including message, timing, and token counts
         """
-        llm_response = self.llm.prompt(prompt)
-
-        # Try to parse the message using the existing parse_llm_json method
-        parsed_json = self.parse_llm_json(llm_response["message"])
-
-        if parsed_json and isinstance(parsed_json, dict):
-            # Successfully parsed as JSON object (dict)
-            llm_response["JSON_dict"] = parsed_json
-            self.logger.info("Successfully parsed LLM response as JSON object")
-        else:
-            self.logger.warning("JSON parsing failure - response was not valid JSON or not a JSON object")
-
-        return llm_response
+        return self.llm.prompt(prompt)
 
     def render_prompt(self, prompt_dict, template_path):
         template = self.jinja_env.get_template(template_path)
         return template.render(prompt_dict)
 
 
-    def parse_llm_json(self, llm_output, add_p_prefix=False):
-        """
-        Generic method to parse any JSON output from LLM, with optional passage ID prefixing.
-
-        Args:
-            llm_output (str): The raw output from the LLM
-            add_p_prefix (bool): Whether to add "p" prefix to items that don't start with "p"
-
-        Returns:
-            list: Parsed list from the LLM output, or empty list if parsing fails
-        """
-        # Try parsing the LLM output as direct JSON first
-        try:
-            return json.loads(llm_output)
-        except json.JSONDecodeError:
-            # Fallback to regex parsing to find JSON-like structures
-            try:
-                # Look for array patterns: [item1, item2, ...]
-                match = re.search(r'\[.*?\]', llm_output, re.DOTALL)
-                if match:
-                    extracted_json = match.group(0)
-                    # Convert single-quoted strings to double quotes for JSON compatibility
-                    extracted_json = extracted_json.replace("'", '"')
-                    # Handle common JSON formatting issues
-                    extracted_json = re.sub(r',\s*}', '}', extracted_json)  # Remove trailing commas
-                    extracted_json = re.sub(r',\s*]', ']', extracted_json)  # Remove trailing commas
-
-                    parsed_list = json.loads(extracted_json)
-
-                    # Apply p prefixing if requested
-                    if add_p_prefix and isinstance(parsed_list, list):
-                        parsed_list = [item if str(item).startswith("p") else f"p{item}" for item in parsed_list]
-
-                    return parsed_list
-                else:
-                    self.logger.warning(f"Failed to parse LLM output as JSON: {llm_output}")
-                    return []
-            except Exception as e:
-                self.logger.warning(f"Failed to parse LLM output as JSON: {e}")
-                return []
-        except Exception as e:
-            self.logger.warning(f"Failed to parse LLM output as JSON: {e}")
-            return []
-    
+  
 
 if __name__ == "__main__":
     #temporary testing for prompter

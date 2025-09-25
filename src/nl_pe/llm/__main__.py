@@ -10,7 +10,7 @@ from pathlib import Path
 #should run as module: >python -m llm
 if __name__ == "__main__":
 
-    config_path = Path('../configs/llm/config.yaml')
+    config_path = Path('configs/llm/config.yaml')
     with open(config_path, 'r') as config_file:
         config = yaml.safe_load(config_file)
 
@@ -19,8 +19,11 @@ if __name__ == "__main__":
     prompter = Prompter(config)
 
     # Use hardcoded prompt with prompter's generic prompt method
-    hardcoded_prompt = r"What is 2+2? Response in a JSON format only: { response: <your response> }"
-    response = prompter.prompt(hardcoded_prompt)
+    #hardcoded_prompt = r"What is 2+2? Response in a JSON format only: { response: <your response> }"
+    #response = prompter.prompt_from_str(hardcoded_prompt)
+
+    template_path = 'hotel_gen.jinja2'
+    response = prompter.prompt_from_temp(template_path)
 
     print("Full response:", response)
 
