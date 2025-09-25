@@ -1,6 +1,6 @@
 llm:
   model_class: OpenAILLM
-  model_name: gpt-4o
+  model_name: gpt-5
   temperature: 1
   num_retries: 3
 logging:
