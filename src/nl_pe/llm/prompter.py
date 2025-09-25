@@ -26,6 +26,70 @@ class Prompter():
         self.jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader(searchpath=self.template_dir))
 
 
+    def pw_rerank(self, state):
+
+        if state["current_batch"] == None:
+            return
+
+        instance = state['instance']
+        query = instance["query"]["text"]
+
+        psg_list_batch = state["current_batch"]
+
+        # Get local passages for the batch using simple pIDs (e.g. 'p1' instead of '1k43hj2f53l345')
+        #local_psgs = {<local_p_id>: {p_id: __, text: __},...}
+        local_psgs = self.get_local_psgs(psg_list_batch)
+
+        #get label descriptions (e.g. "3 is highly relevant...", etc)
+        label_macro_name = self.config['templates'].get('label_macro_name')
+        n_labels = self.config['templates'].get('n_labels')
+        list_len = len(local_psgs)
+
+        prompt_dict = {
+            'query' : query,
+            'local_p_ids' : list(local_psgs.keys()),
+            'p_texts' : [psg["text"] for psg in psg_list_batch],
+            'label_macro_name': label_macro_name,
+            'n_labels': n_labels,
+            'list_len': list_len
+        }
+
+        template_path = self.template_config["pw_rerank"]
+        prompt = self.render_prompt(prompt_dict, template_path)
+
+        llm_response = self.llm.prompt(prompt)
+        llm_output = llm_response["message"]
+        self.add_response_to_state(state,llm_output)
+        self.add_prompt_tokens_to_state(state,llm_response)
+
+        scores = self.parse_llm_list_pw(llm_output)
+        scores = [int(score) for score in scores]
+
+        if 'batch_scores' not in state:
+            state['batch_scores'] = []
+        state['batch_scores'].append(scores)
+
+        self.logger.debug(f"pw_rerank scores: {scores}")
+
+        # Ensure pid_to_score_dict exists in state
+        if "pid_to_score_dict" not in state:
+            state["pid_to_score_dict"] = {}
+
+        for pid in [psg["pid"] for psg in psg_list_batch]:
+            if pid not in state["pid_to_score_dict"]:
+                state["pid_to_score_dict"][pid] = []    
+
+        # Extend the scores for the pids in the batch
+        for pid, score in zip([psg["pid"] for psg in psg_list_batch], scores):
+            state["pid_to_score_dict"][pid].append(score)
+
+        duration = llm_response["prompt_time"]
+        self.logger.debug(f"pw_rerank duration: {duration}")
+
+        if 'prompting_runtimes' not in state:
+            state['prompting_runtimes'] = []
+        state['prompting_runtimes'].append(duration)
+
     def add_prompt_to_state(self,state,prompt):
         if "prompts" not in state:
             state["prompts"] = []  
@@ -42,23 +106,38 @@ class Prompter():
                 state["prompt_tokens"] = []  
             state["prompt_tokens"].append(llm_response['prompt_tokens'])
 
+    def prompt_from_temp(self,template_path):
+        prompt = self.render_prompt(template_path=template_path)
+        self.prompt_from_str(prompt)
 
-    def prompt(self, prompt):
+    def prompt_from_str(self, prompt):
         """
-        Generic method to call the LLM with a prompt and return just the text response.
+        Generic method to call the LLM with a prompt and return the full response.
 
         Args:
             prompt (str): The prompt string to send to the LLM
 
         Returns:
-            str: The text response from the LLM
+            dict: The full response from the LLM including message, timing, and token counts
         """
         llm_response = self.llm.prompt(prompt)
-        return llm_response["message"]
 
-    def render_prompt(self, prompt_dict, template_dir):
-        template = self.jinja_env.get_template(template_dir)
+        # Try to parse the message using the existing parse_llm_json method
+        parsed_json = self.parse_llm_json(llm_response["message"])
+
+        if parsed_json and isinstance(parsed_json, dict):
+            # Successfully parsed as JSON object (dict)
+            llm_response["JSON_dict"] = parsed_json
+            self.logger.info("Successfully parsed LLM response as JSON object")
+        else:
+            self.logger.warning("JSON parsing failure - response was not valid JSON or not a JSON object")
+
+        return llm_response
+
+    def render_prompt(self, prompt_dict, template_path):
+        template = self.jinja_env.get_template(template_path)
         return template.render(prompt_dict)
+
 
     def parse_llm_json(self, llm_output, add_p_prefix=False):
         """
@@ -104,14 +183,6 @@ class Prompter():
             self.logger.warning(f"Failed to parse LLM output as JSON: {e}")
             return []
     
-    def get_local_psgs(self, psg_list):        
-        p_ids = [psg["pid"] for psg in psg_list]
-        p_texts = [psg["text"] for psg in psg_list]
-        if self.config['data'].get('use_simple_pids', False):
-            local_psgs = {f"p{i+1}": {"pid": p_id, "text": p_texts[i]} for i, p_id in enumerate(p_ids)}
-            return local_psgs
-        local_psgs = {p_id: {"pid": p_id, "text": p_texts[i]} for i, p_id in enumerate(p_ids)}
-        return local_psgs
 
 if __name__ == "__main__":
     #temporary testing for prompter
@@ -125,79 +196,3 @@ if __name__ == "__main__":
     load_dotenv()
 
     prompter = Prompter(config)
-
-    # Example toy state for testing
-    state = {
-        "instance": {
-            "query": {
-                "qid": 47923,
-                "text": "axon terminals or synaptic knob definition"
-            },
-            "psg_list": [
-                {
-                    "pid": "5032362",
-                    "text": "What is the term used to describe the rounded areas on the ends of the axon terminals? a) synaptic vesicles Incorrect. Synaptic vesicles are structures within the synaptic knobs. b) axons c) dendrites d) synaptic knobs Correct. Synaptic knobs are located at the tip of each axon terminal."
-                },
-                {
-                    "pid": "1681334",
-                    "text": "Psychology Definition of TERMINAL BUTTON: the terminal part of an axon from which a neural signal is rendered, via dispersion of a neurotransmitter, across a synapse to a nearby neuron TERMINAL BUTTON: The terminal button is commonly referred to as the synaptic button, end button, button terminal, terminal bulb, and synaptic knob. Related Psychology Terms axon terminal"
-                },
-                {
-                    "pid": "1868437",
-                    "text": "The dendrites don\u00e2\u0080\u0099t have terminating knobs at the end of it. The axons are what conduct action potentials away from the cell body. The axon is not an axon because it\u00e2\u0080\u0099s long, it\u00e2\u0080\u0099s an axon because of the existence of synaptic knobs at the axon terminals. When the axon conducts action potentials away from the cell body and the signal goes to the synaptic knob, it\u00e2\u0080\u0099s going to release a neurotransmitter in response to the electrical signal."
-                },
-                {
-                    "pid": "8641107",
-                    "text": "Axons usually have thousands of terminal branches that each end as a bulbous enlargement called a synaptic knob or synaptic terminal. Synaptic knobs contain several membrane-bounded synaptic vesicles that are 40 to 100 nanometers in diameter."
-                },
-                {
-                    "pid": "8418681",
-                    "text": "Axons often have thousands of terminal branches, each ending as a bulbous enlargement, the synaptic knob or synaptic terminal. At the synaptic knob, the action potential is converted into a chemical message which, in turn, interacts with the recipient neuron or effector. This process is synaptic transmission."
-                }
-            ]
-        },
-        "current_batch": [
-            {
-                "pid": "5032362",
-                "text": "What is the term used to describe the rounded areas on the ends of the axon terminals? a) synaptic vesicles Incorrect. Synaptic vesicles are structures within the synaptic knobs. b) axons c) dendrites d) synaptic knobs Correct. Synaptic knobs are located at the tip of each axon terminal."
-            },
-            {
-                "pid": "1681334",
-                "text": "Psychology Definition of TERMINAL BUTTON: the terminal part of an axon from which a neural signal is rendered, via dispersion of a neurotransmitter, across a synapse to a nearby neuron TERMINAL BUTTON: The terminal button is commonly referred to as the synaptic button, end button, button terminal, terminal bulb, and synaptic knob. Related Psychology Terms axon terminal"
-            },
-            {
-                "pid": "1868437",
-                "text": "The dendrites don\u00e2\u0080\u0099t have terminating knobs at the end of it. The axons are what conduct action potentials away from the cell body. The axon is not an axon because it\u00e2\u0080\u0099s long, it\u00e2\u0080\u0099s an axon because of the existence of synaptic knobs at the axon terminals. When the axon conducts action potentials away from the cell body and the signal goes to the synaptic knob, it\u00e2\u0080\u0099s going to release a neurotransmitter in response to the electrical signal."
-            },
-            {
-                "pid": "8641107",
-                "text": "Axons usually have thousands of terminal branches that each end as a bulbous enlargement called a synaptic knob or synaptic terminal. Synaptic knobs contain several membrane-bounded synaptic vesicles that are 40 to 100 nanometers in diameter."
-            },
-            {
-                "pid": "8418681",
-                "text": "Axons often have thousands of terminal branches, each ending as a bulbous enlargement, the synaptic knob or synaptic terminal. At the synaptic knob, the action potential is converted into a chemical message which, in turn, interacts with the recipient neuron or effector. This process is synaptic transmission."
-            }
-        ]
-    }
-
-    # Test the pw_rerank function
-    prompter.lw_rerank(state)
-    prompter.lw_rerank(state)
-    print("Updated state returned:", state)
-    
-    #testing padding/hallucinations/duplicates
-    #state = {
-    #    "current_batch": [
-    #        {"pid": "p1", "text": "Passage 1"},
-    #        {"pid": "p2", "text": "Passage 2"},
-    #        {"pid": "p3", "text": "Passage 3"}
-    #    ]
-    #}
-    #raw_batch_pids = ["p1", "p4", "p1"]
-    #local_psgs = {
-    #    "p1": {"pid": "p1", "text": "Passage 1"},
-    #    "p2": {"pid": "p2", "text": "Passage 2"},
-    #    "p3": {"pid": "p3", "text": "Passage 3"}
-    #}
-    #prompter.update_lw_pid_outputs(state, raw_batch_pids, local_psgs, pad=True)
-    #print("Updated state:", state)

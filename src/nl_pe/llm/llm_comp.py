@@ -1,12 +1,12 @@
 from abc import ABC, abstractmethod
 import os
 import time
-import openai
+from openai import OpenAI
 from dotenv import load_dotenv
 import yaml
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
-from google.api_core.exceptions import GoogleAPICallError, RetryError, InvalidArgument
+#import google.generativeai as genai
+#from google.generativeai.types import HarmCategory, HarmBlockThreshold
+#from google.api_core.exceptions import GoogleAPICallError, RetryError, InvalidArgument
 import random
 import google
 import argparse
@@ -70,21 +70,32 @@ class BaseLLM(ABC):
 class OpenAILLM(BaseLLM):
     def __init__(self, config, model_name):
         super().__init__(config,model_name)
-        openai.api_key = os.environ['OPENAI_API_KEY']
+        self.client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 
-    def call_api(self, prompt, logprobs = False, top_logprobs = 3):
-        response = openai.ChatCompletion.create(
+    def call_api(self, prompt):
+        start_time = time.perf_counter()
+        response = self.client.chat.completions.create(
             model=self.model_name,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": prompt}
             ],
             temperature=self.temp,
-            logprobs=logprobs,
+            response_format={ "type": "json_object" }
         )
+        end_time = time.perf_counter()
+        duration = end_time - start_time
+
+        # Extract token usage from response
+        usage = response.usage
+        input_tokens = getattr(usage, 'prompt_tokens', 0)
+        output_tokens = getattr(usage, 'completion_tokens', 0)
+
         return {
-            "message": response.choices[0].message['content'],
-            "logprobs": response.choices[0].logprobs if logprobs == True else None
+            "message": response.choices[0].message.content,
+            "prompt_time": duration,
+            "prompt_tokens": input_tokens,
+            "output_tokens": output_tokens
         }
     
 
