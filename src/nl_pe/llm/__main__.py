@@ -22,7 +22,7 @@ if __name__ == "__main__":
     #hardcoded_prompt = r"What is 2+2? Response in a JSON format only: { response: <your response> }"
     #response = prompter.prompt_from_str(hardcoded_prompt)
 
-    template_path = 'hotel_gen.jinja2'
+    template_path = 'test.jinja2' #'hotel_gen.jinja2'
     response = prompter.prompt_from_temp(template_path)
 
     print("Full response:", response)
