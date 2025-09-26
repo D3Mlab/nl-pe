@@ -6,12 +6,6 @@ import csv
 
 from pathlib import Path
 import yaml
-
-PROJECT_ROOT = Path.cwd().parent  # points to nl-pe/ (from scripts/)
-SRC_PATH = PROJECT_ROOT / "src"
-sys.path.insert(0, str(SRC_PATH))  # make nl_pe importable
-os.chdir(PROJECT_ROOT)
-
 from dotenv import load_dotenv
 from nl_pe.llm.prompter import Prompter
 from nl_pe.utils.text_processing import list_to_text_block
@@ -30,21 +24,31 @@ corpus_path = 'data/real_docs/movielens/movies_1.csv'
 df = pd.read_csv(corpus_path)
 
 # Get first n_rows rows and extract d_text column
-n_items = 3
+n_items = 30
 first_three_texts = df['d_text'].head(n_items).tolist()
 
 # Convert to formatted text block
 item_list = list_to_text_block(first_three_texts, index_str="Movie")
-n_users = 2
+n_users = 5
+
+#word requirements for each preferences
+K_words_min = 20
+K_words_max = 100
+
+#number of minimum relevant items 
+n_rel_min = 2
 
 # Create prompt dict
 prompt_dict = {
                'item_list': item_list,
-               'n_users' = n_users,
-               'n_items' = n_items}
+               'n_users': n_users,
+               'n_items': n_items,
+               'K_words_min': K_words_min,
+               'K_words_max': K_words_max,
+               'n_rel_min': n_rel_min}
 
 # Use the specified template
-template_path = 'movie_pref_gen_1.jinja2'
+template_path = 'item_pref_gen_1.jinja2'
 
 # Call prompter
 response = prompter.prompt_from_temp(template_path, prompt_dict)
@@ -76,9 +80,18 @@ if 'JSON_dict' in response:
     with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(['u_id', 'u_pref'])
-        for idx, pref_text in enumerate(user_prefs, 1):
-            writer.writerow([idx, pref_text])
+        for idx, user_dict in enumerate(user_prefs, 1):
+            writer.writerow([idx, user_dict['preference']])
 
     print(f"CSV file created successfully: {csv_path}")
+
+    # Save to qrels file
+    qrels_path = output_dir / 'movie_users_qrels.txt'
+    with open(qrels_path, 'w', encoding='utf-8') as f:
+        for user_id, user_dict in enumerate(user_prefs, 1):
+            for item_id in user_dict['relevant_item_id_list']:
+                f.write(f"{user_id} 0 {item_id} 1\n")
+
+    print(f"Qrels file created successfully: {qrels_path}")
 else:
     print("No JSON_dict found in response")
