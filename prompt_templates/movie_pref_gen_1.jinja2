@@ -1,0 +1,19 @@
+You are given the following list of {{ n_items }} item texts and their integer item ids from 1 to {{ n_items }.
+
+Generate {{ n_users }} texts describing {{ n_users }} diverse user preferences based on these items, and for each user, a list of all item ids that satisfy that preference. 
+
+Output format (valid JSON):
+{
+  "user_1": {
+    "preference": "<preference_1>",
+    "relevant_item_id_list": [<int id of first relevant for user 1>, ..., <int id of last relevant item for user 1>]
+  },
+  ...
+  "user_{{ n_users }}": {
+    "preference": "<preference_{{ n_users }}>",
+    "relevant_item_id_list": [<int id of first relevant item for user {{ n_users }}>, ..., <int id of last relevant item for user {{ n_users }}>]
+  }
+}
+
+The item list is:
+{{ item_list }}

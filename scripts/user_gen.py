@@ -10,7 +10,6 @@ import yaml
 PROJECT_ROOT = Path.cwd().parent  # points to nl-pe/ (from scripts/)
 SRC_PATH = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_PATH))  # make nl_pe importable
-
 os.chdir(PROJECT_ROOT)
 
 from dotenv import load_dotenv
@@ -30,14 +29,19 @@ prompter = Prompter(config)
 corpus_path = 'data/real_docs/movielens/movies_1.csv'
 df = pd.read_csv(corpus_path)
 
-# Get first 3 rows and extract d_text column
-first_three_texts = df['d_text'].head(3).tolist()
+# Get first n_rows rows and extract d_text column
+n_items = 3
+first_three_texts = df['d_text'].head(n_items).tolist()
 
 # Convert to formatted text block
 item_list = list_to_text_block(first_three_texts, index_str="Movie")
+n_users = 2
 
 # Create prompt dict
-prompt_dict = {'item_list': item_list}
+prompt_dict = {
+               'item_list': item_list,
+               'n_users' = n_users,
+               'n_items' = n_items}
 
 # Use the specified template
 template_path = 'movie_pref_gen_1.jinja2'
