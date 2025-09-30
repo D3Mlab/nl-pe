@@ -1,9 +1,8 @@
 """
 Embedding module with GPU-accelerated KNN operations and comprehensive debug logging.
 
-
 KNN Methods:
-- exact_knn_from_pckl: Full GPU acceleration for pickled embeddings
+- exact_knn_from_embeddings: Full GPU acceleration for torch.save embeddings
 - exact_knn_from_faiss: Optimized FAISS search (no CSV reading)
 - exact_knn_from_db: Memory-efficient batched processing for shelve databases
 
@@ -22,6 +21,7 @@ from sentence_transformers import SentenceTransformer
 import faiss
 import shelve
 import numpy as np
+import io
 
 
 class BaseEmbedder(ABC):
@@ -38,7 +38,7 @@ class BaseEmbedder(ABC):
         """
         raise NotImplementedError("This method must be implemented by a subclass.")
 
-    def embed_all_docs_pckl(self, texts_csv_path = '', index_path = '', batch_size = None):
+    def save_embeddings_torch(self, texts_csv_path = '', index_path = '', batch_size = None):
         #inputs: path to csv with headers where first col is doc id and second is doc text
         #output, torch.save dict of {<d_id>: <torch_embedding>}
         df = pd.read_csv(texts_csv_path, header=0)
@@ -132,12 +132,15 @@ class BaseEmbedder(ABC):
                 embeddings_tensor = self.embed_documents_batch(texts)
                 self.logger.debug(f"Batch embeddings device: {embeddings_tensor.device}, shape: {embeddings_tensor.shape}")
 
-                embeddings = embeddings_tensor.detach().cpu()
-                self.logger.debug(f"Moved embeddings to CPU for storage")
-
-                for doc_id, emb in zip(doc_ids, embeddings):
-                    db[str(doc_id)] = emb
-                    self.logger.debug(f"Stored embedding for doc_id {doc_id} in shelve DB")
+                # Keep embeddings on GPU and use torch.save for each embedding
+                for doc_id, emb in zip(doc_ids, embeddings_tensor):
+                    # Use torch.save to preserve GPU tensor without CPU conversion
+                    import io
+                    buffer = io.BytesIO()
+                    torch.save(emb, buffer)
+                    buffer.seek(0)
+                    db[str(doc_id)] = buffer.read()  # Store raw bytes
+                    self.logger.debug(f"Stored GPU embedding for doc_id {doc_id} using torch.save")
 
                 db.sync()  # force flush to disk
                 self.logger.info("Processed batch %d/%d",
@@ -146,14 +149,14 @@ class BaseEmbedder(ABC):
 
             self.logger.info("Saved embeddings to shelve db %s", index_path)
 
-    def exact_knn_from_pckl(self, query: str, k=10, prompt='', pckl_path='') -> list[str]:
+    def exact_knn_from_embeddings(self, query: str, k=10, prompt='', embeddings_path='') -> list[str]:
         self.logger.debug(f"Starting KNN search for query with k={k}")
 
         query_emb = self.embed_documents_batch([query], prompt=prompt)[0]
         self.logger.debug(f"query_emb device after embedding: {query_emb.device}, shape: {query_emb.shape}")
 
-        self.logger.debug(f"Loading embeddings from {pckl_path}")
-        emb_dict = torch.load(pckl_path, map_location='cpu')  # Load on CPU first to check
+        self.logger.debug(f"Loading embeddings from {embeddings_path}")
+        emb_dict = torch.load(embeddings_path, map_location='cpu')  # Load on CPU first to check
         self.logger.debug(f"Loaded {len(emb_dict)} embeddings from file")
 
         # Check device of loaded embeddings
@@ -232,9 +235,13 @@ class BaseEmbedder(ABC):
                 batch_embeddings = []
                 self.logger.debug(f"Processing batch {i//batch_size + 1}, keys: {batch_keys[:3]}...")  # Show first 3 keys
 
-                # Load batch embeddings
+                # Load batch embeddings using torch.load to preserve GPU tensors
                 for key in batch_keys:
-                    emb = db[key]
+                    emb_bytes = db[key]
+                    import io
+                    buffer = io.BytesIO(emb_bytes)
+                    emb = torch.load(buffer)
+                    self.logger.debug(f"Loaded embedding for doc_id {key}, device: {emb.device}")
                     batch_embeddings.append(emb.detach().cpu().numpy())
 
                 # Vectorized similarity computation for this batch with PyTorch GPU acceleration
