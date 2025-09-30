@@ -17,3 +17,4 @@ scipy==1.16.2
 torch==2.5.1
 transformers>=4.51.0
 sentence-transformers>=2.7.0
+faiss-cpu
