@@ -173,7 +173,7 @@ def main():
     os.makedirs('plots', exist_ok=True)
 
     # Plot points for visualization
-    x_plot = torch.linspace(-2, 3, 200)
+    x_plot = torch.linspace(-5, 8, 300)
 
     # Generate observations
     x_obs, y_obs, n_total = generate_mixed_observations(n_per_cluster=5, noise_std=0.1)
