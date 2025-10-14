@@ -120,6 +120,9 @@ class BaseEmbedder(ABC):
             num_docs = len(df)
             self.logger.debug(f"Loaded {num_docs} documents for shelve storage")
 
+            if not batch_size:
+                batch_size = num_docs
+
             for i in range(0, num_docs, batch_size):
                 batch_df = df.iloc[i:i + batch_size]
                 texts = batch_df.iloc[:, 0].tolist()
