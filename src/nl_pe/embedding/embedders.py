@@ -149,7 +149,7 @@ class BaseEmbedder(ABC):
 
             self.logger.info("Saved embeddings to shelve db %s", index_path)
 
-    def exact_knn_from_embeddings(self, query: str, k=10, prompt='', embeddings_path='') -> list[str]:
+    def exact_knn_from_embedding_dict(self, query: str, k=10, prompt='', embeddings_path='') -> list[str]:
         self.logger.debug(f"Starting KNN search for query with k={k}")
 
         query_emb = self.embed_documents_batch([query], prompt=prompt)[0]
@@ -298,7 +298,7 @@ class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
         kwargs = dict(
             convert_to_tensor=True,
             normalize_embeddings=self.normalize,
-            show_progress_bar=False
+            show_progress_bar=True
         )
 
         if prompt:
