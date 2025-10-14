@@ -173,7 +173,7 @@ class BaseEmbedder(ABC):
 
         return top_k_indices.tolist()  
 
-    def exact_knn_from_faiss(self, query: str, k=10, prompt='', index_path='', texts_csv_path='') -> list[str]:
+    def exact_knn_from_faiss(self, query: str, k=10, prompt='', index_path='') -> list[str]:
         query_emb = self.embed_documents_batch([query], prompt=prompt)[0]
         self.logger.debug(f"query_emb device after embedding: {query_emb.device}")
 
