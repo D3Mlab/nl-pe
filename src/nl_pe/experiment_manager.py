@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import time
 from nl_pe.utils.setup_logging import setup_logging
+from nl_pe.embedding import EMBEDDER_CLASSES
 from nl_pe import search_agent
 
 class ExperimentManager():
@@ -13,12 +14,32 @@ class ExperimentManager():
     def __init__(self, exp_dir):
         self.exp_dir = exp_dir
         self.load_config()
-        #TODO: update configs to direct subclass loggers to experiment log
         self.setup_logger()
 
     def index_corpus(self):
-        self.logger.info("Starting corpus indexing...")        
+        self.logger.info("Starting corpus indexing...")
 
+        self.embedding_config = self.config.get('embedding', {})
+
+        #init embedder
+        embedder_init_kwargs = dict(
+            normalize= self.embedding_config.get('normalize', True),
+            model_name= self.embedding_config.get('model', ''),
+        )
+
+        matryoshka_dim = self.embedding_config.get('matryoshka_dim', None)
+        if matryoshka_dim:
+            embedder_init_kwargs["matryoshka_dim"] = matryoshka_dim
+
+        embedder_class = EMBEDDER_CLASSES[self.embedding_config.get('class')]
+        self.embedder = embedder_class(**embedder_init_kwargs)
+
+        #get index method
+        index_method_name = self.embedding_config.get('index_method', '')
+        self.index_method = getattr(self.embedder, index_method_name)
+
+        #inputs to index methods: 
+        # texts_csv_path, index_path, batch_size, prompt
 
     def load_config(self):
         config_path = os.path.join(self.exp_dir, "config.yaml")

@@ -36,7 +36,7 @@ class BaseEmbedder(ABC):
         """
         raise NotImplementedError("This method must be implemented by a subclass.")
 
-    def save_embeddings_torch(self, texts_csv_path = '', index_path = '', batch_size = None):
+    def save_embeddings_torch(self, texts_csv_path = '', index_path = '', batch_size = None, prompt = ''):
         """
         Reads a CSV where the first column is the text to embed.
         Saves only the embeddings tensor to index_path for maximum efficiency.
@@ -67,7 +67,7 @@ class BaseEmbedder(ABC):
         torch.save(all_embeddings, index_path)
         self.logger.info("Saved embeddings tensor to %s", index_path)
 
-    def embed_all_docs_faiss_exact(self, texts_csv_path='', index_path='', batch_size=None):
+    def embed_all_docs_faiss_exact(self, texts_csv_path='', index_path='', batch_size=None, prompt = ''):
         """Embed all documents and create an exact FAISS index."""
         self.logger.debug(f"Creating FAISS index from {texts_csv_path}")
         df = pd.read_csv(texts_csv_path, header=0)
@@ -110,7 +110,7 @@ class BaseEmbedder(ABC):
 
 
 
-    def embed_doc_batches_db(self, texts_csv_path='', index_path='', batch_size=10000):
+    def embed_doc_batches_db(self, texts_csv_path='', index_path='', batch_size=10000, prompt = ''):
         self.logger.debug(f"Creating shelve database from {texts_csv_path}")
 
         with shelve.open(index_path, writeback=False) as db:
@@ -285,8 +285,8 @@ class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
 
         if prompt:
             self.logger.debug(f"Using prompt: {prompt}")
-            self.model.prompts['query'] = prompt
-            kwargs["prompt_name"] = "query"
+            self.model.prompts['prompt'] = prompt
+            kwargs["prompt_name"] = "prompt"
 
         embeddings_tensor = self.model.encode(texts, **kwargs)
 
