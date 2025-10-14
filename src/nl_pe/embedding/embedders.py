@@ -20,13 +20,15 @@ from sentence_transformers import SentenceTransformer
 import faiss
 import shelve
 import numpy as np
-
+import os
+from nl_pe.utils.setup_logging import setup_logging
 
 class BaseEmbedder(ABC):
 
-    def __init__(self, normalize=True):
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.setLevel(logging.DEBUG)
+    def __init__(self, config = {}, normalize=True):
+        self.config = config
+        print('exp_dir is ', self.config.get('exp_dir', 'not set'))
+        self.logger = setup_logging(self.__class__.__name__, config = self.config, output_file=os.path.join(self.config['exp_dir'], "experiment.log"))
         self.normalize = normalize
 
     @abstractmethod
@@ -266,8 +268,8 @@ class BaseEmbedder(ABC):
 
 class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
 
-    def __init__(self, model_name='', matryoshka_dim=None, normalize=True):
-        super().__init__(normalize)
+    def __init__(self, config = {}, model_name='', matryoshka_dim=None, normalize=True):
+        super().__init__(config = config, normalize=normalize)
 
         # e.g. model_name = Qwen/Qwen3-Embedding-8B
         self.model = SentenceTransformer(

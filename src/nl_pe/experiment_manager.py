@@ -15,6 +15,7 @@ class ExperimentManager():
         self.exp_dir = exp_dir
         self.load_config()
         self.setup_logger()
+        self.config['exp_dir'] = self.exp_dir
 
     def index_corpus(self):
         self.logger.info("Starting corpus indexing...")
@@ -24,6 +25,7 @@ class ExperimentManager():
 
         #init embedder
         embedder_init_kwargs = dict(
+            config = self.config,
             normalize = self.embedding_config.get('normalize', True),
             model_name= self.embedding_config.get('model', ''),
         )
