@@ -38,13 +38,11 @@ class BaseEmbedder(ABC):
 
     def save_embeddings_torch(self, texts_csv_path = '', index_path = '', batch_size = None):
         """
-        Reads a CSV where:
-            - First column = doc_id (ignored for saving, order assumed preserved)
-            - Second column = text to embed.
+        Reads a CSV where the first column is the text to embed.
         Saves only the embeddings tensor to index_path for maximum efficiency.
         """
         df = pd.read_csv(texts_csv_path, header=0)
-        texts = df.iloc[:, 1].tolist()
+        texts = df.iloc[:, 0].tolist()
 
         self.logger.debug(f"Loading {len(texts)} documents from CSV for embedding")
 
@@ -73,7 +71,7 @@ class BaseEmbedder(ABC):
         """Embed all documents and create an exact FAISS index."""
         self.logger.debug(f"Creating FAISS index from {texts_csv_path}")
         df = pd.read_csv(texts_csv_path, header=0)
-        texts = df.iloc[:, 1].tolist()
+        texts = df.iloc[:, 0].tolist()
 
         num_docs = len(texts)
         batch_size = batch_size or num_docs
@@ -122,8 +120,7 @@ class BaseEmbedder(ABC):
 
             for i in range(0, num_docs, batch_size):
                 batch_df = df.iloc[i:i + batch_size]
-                doc_ids = batch_df.iloc[:, 0].tolist()
-                texts = batch_df.iloc[:, 1].tolist()
+                texts = batch_df.iloc[:, 0].tolist()
 
                 self.logger.debug(f"Processing shelve batch {i//batch_size + 1}/{(num_docs + batch_size - 1) // batch_size} with {len(texts)} documents")
 
@@ -131,7 +128,8 @@ class BaseEmbedder(ABC):
                 self.logger.debug(f"Batch embeddings device: {embeddings_tensor.device}, shape: {embeddings_tensor.shape}")
 
                 # Keep embeddings on GPU and use torch.save for each embedding
-                for doc_id, emb in zip(doc_ids, embeddings_tensor):
+                for j, emb in enumerate(embeddings_tensor):
+                    doc_id = i + j # Implicit doc_id is the row index
                     # Use torch.save to preserve GPU tensor without CPU conversion
                     import io
                     buffer = io.BytesIO()
