@@ -294,16 +294,20 @@ class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
 
     def embed_documents_batch(self, texts: list[str], prompt = '') -> Tensor:
         self.logger.debug(f"Encoding {len(texts)} texts in batch")
-        if prompt:
-            self.logger.debug(f"Using prompt: {prompt}")
-            pass #fill in for query later
 
-        embeddings_tensor = self.model.encode(
-            texts,
+        kwargs = dict(
             convert_to_tensor=True,
             normalize_embeddings=self.normalize,
-            show_progress_bar=False  # Since batching is handled at higher level
+            show_progress_bar=False
         )
+
+        if prompt:
+            self.logger.debug(f"Using prompt: {prompt}")
+            self.model.prompts['query'] = prompt
+            kwargs["prompt_name"] = "query"
+
+        embeddings_tensor = self.model.encode(texts, **kwargs)
+
         self.logger.debug(f"Embeddings created, device: {embeddings_tensor.device}, shape: {embeddings_tensor.shape}")
         return embeddings_tensor
 
