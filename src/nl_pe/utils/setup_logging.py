@@ -16,16 +16,14 @@ def setup_logging(name: str, config = {}, level = None, output_file = None) -> l
         logging.Logger: The configured logger instance.
     """
     logger = logging.getLogger(name)
-
-    # Check if the logger has already been configured
-    if getattr(logger, 'is_configured', False):
-        return logger
-
-    # Prevents duplicates if a class has multiple instances
+    
+    # Always remove existing handlers to prevent duplicates
     if logger.hasHandlers():
-        for handler in logger.handlers:
+        for handler in logger.handlers[:]:
             logger.removeHandler(handler)
 
+    if getattr(logger, 'is_configured', False):
+        return logger
     # Check if logger is disabled
     logging_config = config.get('logging', {})
     logger.disabled = logging_config.get('disabled', None)
