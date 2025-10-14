@@ -61,11 +61,8 @@ movies_merged = movies_merged.sort_values(
     ["tag_count", "d_text"], ascending=[False, True]  # break ties alphabetically
 ).reset_index(drop=True)
 
-# Assign d_id sequentially
-movies_merged["d_id"] = np.arange(1, len(movies_merged) + 1)
-
 # Final dataframe
-final_df = movies_merged[["d_id", "d_text", "movieId"]].rename(
+final_df = movies_merged[["d_text", "movieId"]].rename(
     columns={"movieId": "movie_id"}
 )
 
