@@ -23,19 +23,8 @@ class ExperimentManager():
         self.embedding_config = self.config.get('embedding', {})
         self.data_config = self.config.get('data', {})
 
-        #init embedder
-        embedder_init_kwargs = dict(
-            config = self.config,
-            normalize = self.embedding_config.get('normalize', True),
-            model_name= self.embedding_config.get('model', ''),
-        )
-
-        matryoshka_dim = self.embedding_config.get('matryoshka_dim', None)
-        if matryoshka_dim:
-            embedder_init_kwargs["matryoshka_dim"] = matryoshka_dim
-
         embedder_class = EMBEDDER_CLASSES[self.embedding_config.get('class')]
-        self.embedder = embedder_class(**embedder_init_kwargs)
+        self.embedder = embedder_class(self.config)
 
         #get index method
         index_method_name = self.embedding_config.get('index_method', '')

@@ -25,12 +25,16 @@ from nl_pe.utils.setup_logging import setup_logging
 
 class BaseEmbedder(ABC):
 
-    def __init__(self, config = {}, normalize=True):
+    def __init__(self, config):
         self.config = config
-        print('exp_dir is ', self.config.get('exp_dir', 'not set'))
+        self.embedding_config = self.config.get('embedding', {})
         self.logger = setup_logging(self.__class__.__name__, config = self.config, output_file=os.path.join(self.config['exp_dir'], "experiment.log"))
-        self.normalize = normalize
+        self.normalize = self.embedding_config.get('normalize', True)
+        self.model_name = self.embedding_config.get('model', '')
+        self.matryoshka_dim = self.embedding_config.get('matryoshka_dim', None)
 
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        
     @abstractmethod
     def embed_documents_batch(self, texts: list[str], prompt = '') -> Tensor:
         """
@@ -268,21 +272,22 @@ class BaseEmbedder(ABC):
 
 class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
 
-    def __init__(self, config = {}, model_name='', matryoshka_dim=None, normalize=True):
-        super().__init__(config = config, normalize=normalize)
+    def __init__(self, config):
+        super().__init__(config)
 
         # e.g. model_name = Qwen/Qwen3-Embedding-8B
         self.model = SentenceTransformer(
-            model_name,
+            self.model_name,
             #no flash attention, since may need wsl switch
             model_kwargs={}, #{"device_map": "auto"},
             tokenizer_kwargs={"padding_side": "left"},
-            truncate_dim=matryoshka_dim,
+            truncate_dim=self.matryoshka_dim,
+            device = self.device
         )
 
         device = getattr(self.model, "device", getattr(self.model, "device", "unknown"))
         self.logger.info(f"Model device: {device}")
-        self.logger.info("Matryoshka dimension set to: %s", matryoshka_dim if matryoshka_dim else "full")
+        self.logger.info("Matryoshka dimension set to: %s", self.matryoshka_dim if self.matryoshka_dim else "full")
 
     def embed_documents_batch(self, texts: list[str], prompt = '') -> Tensor:
         self.logger.debug(f"Encoding {len(texts)} texts in batch")
@@ -298,7 +303,7 @@ class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
             self.model.prompts['prompt'] = prompt
             kwargs["prompt_name"] = "prompt"
 
-        embeddings_tensor = self.model.encode(texts, **kwargs)
+        embeddings_tensor = self.model.encode(texts, **kwargs) #.to(device)
 
         self.logger.debug(f"Embeddings created, device: {embeddings_tensor.device}, shape: {embeddings_tensor.shape}")
         return embeddings_tensor
