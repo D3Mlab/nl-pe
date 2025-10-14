@@ -20,10 +20,11 @@ class ExperimentManager():
         self.logger.info("Starting corpus indexing...")
 
         self.embedding_config = self.config.get('embedding', {})
+        self.data_config = self.config.get('data', {})
 
         #init embedder
         embedder_init_kwargs = dict(
-            normalize= self.embedding_config.get('normalize', True),
+            normalize = self.embedding_config.get('normalize', True),
             model_name= self.embedding_config.get('model', ''),
         )
 
@@ -40,6 +41,13 @@ class ExperimentManager():
 
         #inputs to index methods: 
         # texts_csv_path, index_path, batch_size, prompt
+
+        self.index_method(
+            texts_csv_path = self.data_config.get('d_text_csv', ''),
+            index_path = self.data_config.get('index_path', ''),
+            batch_size = self.embedding_config.get('batch_size', None),
+            prompt = self.embedding_config.get('doc_prompt', '')
+        )
 
     def load_config(self):
         config_path = os.path.join(self.exp_dir, "config.yaml")

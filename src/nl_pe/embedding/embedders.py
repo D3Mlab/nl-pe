@@ -24,10 +24,10 @@ import numpy as np
 
 class BaseEmbedder(ABC):
 
-    def __init__(self, normalize_embeddings=True):
+    def __init__(self, normalize=True):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.setLevel(logging.DEBUG)
-        self.normalize = normalize_embeddings
+        self.normalize = normalize
 
     @abstractmethod
     def embed_documents_batch(self, texts: list[str], prompt = '') -> Tensor:
@@ -41,8 +41,10 @@ class BaseEmbedder(ABC):
         Reads a CSV where the first column is the text to embed.
         Saves only the embeddings tensor to index_path for maximum efficiency.
         """
+        self.logger.debug(f"Reading texts from CSV: {texts_csv_path}")
         df = pd.read_csv(texts_csv_path, header=0)
         texts = df.iloc[:, 0].tolist()
+        self.logger.debug(f"First 3 texts: {texts[:3]}... ")
 
         self.logger.debug(f"Loading {len(texts)} documents from CSV for embedding")
 
@@ -261,17 +263,20 @@ class BaseEmbedder(ABC):
 
 class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
 
-    def __init__(self, model_name='', matryoshka_dim=None, normalize_embeddings=True):
-        super().__init__(normalize_embeddings)
+    def __init__(self, model_name='', matryoshka_dim=None, normalize=True):
+        super().__init__(normalize)
 
         # e.g. model_name = Qwen/Qwen3-Embedding-8B
         self.model = SentenceTransformer(
             model_name,
-            model_kwargs={"attn_implementation": "flash_attention_2", "device_map": "auto"},
+            #no flash attention, since may need wsl switch
+            model_kwargs={}, #{"device_map": "auto"},
             tokenizer_kwargs={"padding_side": "left"},
             truncate_dim=matryoshka_dim,
         )
-        self.logger.info("Primary model device: %s", next(self.model[0].auto_model.parameters()).device)
+
+        device = getattr(self.model, "device", getattr(self.model, "device", "unknown"))
+        self.logger.info(f"Model device: {device}")
         self.logger.info("Matryoshka dimension set to: %s", matryoshka_dim if matryoshka_dim else "full")
 
     def embed_documents_batch(self, texts: list[str], prompt = '') -> Tensor:
