@@ -16,12 +16,10 @@ from torch import Tensor
 from abc import ABC, abstractmethod
 import logging
 import pandas as pd
-import pickle
 from sentence_transformers import SentenceTransformer
 import faiss
 import shelve
 import numpy as np
-import io
 
 
 class BaseEmbedder(ABC):
@@ -71,48 +69,47 @@ class BaseEmbedder(ABC):
         torch.save(all_embeddings, index_path)
         self.logger.info("Saved embeddings tensor to %s", index_path)
 
-    def embed_all_docs_faiss_exact(self, texts_csv_path = '', index_path = '', batch_size = None):
-        # Assumes document IDs in first column are 0 to N-1 in CSV order
+    def embed_all_docs_faiss_exact(self, texts_csv_path='', index_path='', batch_size=None):
+        """Embed all documents and create an exact FAISS index."""
         self.logger.debug(f"Creating FAISS index from {texts_csv_path}")
-
         df = pd.read_csv(texts_csv_path, header=0)
-        doc_ids = df.iloc[:, 0].tolist()
         texts = df.iloc[:, 1].tolist()
-        self.logger.debug(f"Loaded {len(texts)} documents from CSV for FAISS indexing")
 
         num_docs = len(texts)
         batch_size = batch_size or num_docs
-        self.logger.debug(f"Processing in batches of {batch_size}")
+        self.logger.debug(f"Processing {num_docs} docs in batches of {batch_size}")
 
-        all_embeddings = []
-        for i in range(0, num_docs, batch_size):
-            batch_texts = texts[i:i + batch_size]
-            self.logger.debug(f"Processing FAISS batch {i//batch_size + 1}/{(num_docs + batch_size - 1) // batch_size}")
+        # Embed first batch to get dimensionality and add to index
+        first_batch = self.embed_documents_batch(texts[:batch_size])
+        d = first_batch.shape[1]
+        self.logger.debug(f"Embedding dimension: {d}")
 
-            embeddings_tensor = self.embed_documents_batch(batch_texts)
-            self.logger.debug(f"Batch embeddings device: {embeddings_tensor.device}, shape: {embeddings_tensor.shape}")
-
-            all_embeddings.append(embeddings_tensor.detach().cpu().numpy())
-
-        all_embeddings = np.concatenate(all_embeddings, axis=0)
-        self.logger.debug(f"Concatenated embeddings shape: {all_embeddings.shape}")
-
-        d = all_embeddings.shape[1]
-        self.logger.debug(f"Creating FAISS index with dimension {d}")
-
-        index = faiss.IndexFlatIP(d)
-        if faiss.get_num_gpus() > 0:
-            self.logger.debug("FAISS GPU available, using GPU acceleration")
+        index = faiss.IndexFlatIP(d)  # Inner product
+        use_gpu = faiss.get_num_gpus() > 0
+        if use_gpu:
+            self.logger.debug("Using FAISS GPU acceleration")
             res = faiss.StandardGpuResources()
             index = faiss.index_cpu_to_gpu(res, 0, index)
-            index.add(all_embeddings)
-            cpu_index = faiss.index_gpu_to_cpu(index)
-            faiss.write_index(cpu_index, index_path)
-        else:
-            self.logger.debug("FAISS GPU not available, using CPU")
-            index.add(all_embeddings)
-            faiss.write_index(index, index_path)
-        self.logger.info("Saved FAISS exact index to %s", index_path)
+
+        #add first batch
+        batch_embeddings = first_batch.detach().cpu().numpy()
+        index.add(batch_embeddings)
+        self.logger.debug("Added first batch to FAISS index")
+
+        # Process remaining batches
+        for i in range(batch_size, num_docs, batch_size):
+            batch_texts = texts[i:i + batch_size]
+            embeddings_tensor = self.embed_documents_batch(batch_texts)
+            batch_embeddings = embeddings_tensor.detach().cpu().numpy()
+            index.add(batch_embeddings)
+            self.logger.debug(f"Added batch {i//batch_size + 1}/{(num_docs + batch_size - 1)//batch_size}")
+
+        # Move index back to CPU if GPU was used and save
+        if use_gpu:
+            index = faiss.index_gpu_to_cpu(index)
+        faiss.write_index(index, index_path)
+        self.logger.info(f"Saved FAISS exact index to {index_path}")
+
 
 
     def embed_doc_batches_db(self, texts_csv_path='', index_path='', batch_size=10000):
@@ -150,8 +147,9 @@ class BaseEmbedder(ABC):
 
             self.logger.info("Saved embeddings to shelve db %s", index_path)
 
-    def exact_knn_from_torch(self, query: str, k=10, prompt='', embeddings_path='') -> list[int]:
+    def exact_knn_from_torch_all_in_mem(self, query: str, k=10, prompt='', embeddings_path='') -> list[int]:
         #for small corpora only, loads all embeddings to GPU/CPU and uses a single matrix-vector multiply
+
         self.logger.debug(f"Starting KNN search for query with k={k}")
 
         # Embed the query
@@ -176,7 +174,6 @@ class BaseEmbedder(ABC):
         self.logger.debug(f"Top-k indices: {top_k_indices.tolist()}")
 
         return top_k_indices.tolist()  
-
 
     def exact_knn_from_faiss(self, query: str, k=10, prompt='', index_path='', texts_csv_path='') -> list[str]:
         query_emb = self.embed_documents_batch([query], prompt=prompt)[0]
