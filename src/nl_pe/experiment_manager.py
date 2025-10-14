@@ -39,8 +39,10 @@ class ExperimentManager():
         index_method_name = self.embedding_config.get('index_method', '')
         self.index_method = getattr(self.embedder, index_method_name)
 
-        #inputs to index methods: 
+        #inputs to index methods:
         # texts_csv_path, index_path, batch_size, prompt
+
+        start_time = time.time()
 
         self.index_method(
             texts_csv_path = self.data_config.get('d_text_csv', ''),
@@ -48,6 +50,13 @@ class ExperimentManager():
             batch_size = self.embedding_config.get('batch_size', None),
             prompt = self.embedding_config.get('doc_prompt', '')
         )
+
+        end_time = time.time()
+        embedding_time = end_time - start_time
+
+        embedding_details_path = os.path.join(self.exp_dir, "embedding_details.json")
+        with open(embedding_details_path, 'w') as f:
+            json.dump({'embedding_time': embedding_time}, f)
 
     def load_config(self):
         config_path = os.path.join(self.exp_dir, "config.yaml")
