@@ -190,6 +190,9 @@ class BaseEmbedder(ABC):
 
         state['top_k_psgs'] = top_k_indices.tolist()
 
+        #del embeddings_tensor, query_emb, similarities
+        #torch.cuda.empty_cache()
+
     def exact_knn_from_faiss(self, state) -> list[str]:
         query = state.get("query")
         

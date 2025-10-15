@@ -73,6 +73,7 @@ class ExperimentManager():
                     self.write_query_result(qid, result)
                 else:
                     self.logger.error(f'Failed to rank query {qid} -- empty result[\'top_k_psgs\']')
+
             except Exception as e:
                 self.logger.error(f'Failed to rank or write results for query {qid}: {str(e)}')
             
