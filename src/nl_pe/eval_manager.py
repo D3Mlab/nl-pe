@@ -1,21 +1,13 @@
 import os
-import re
 import yaml
 import argparse
 import pytrec_eval
 import json
 import numpy as np
 from scipy.stats import norm
-from fpdf import FPDF
 from nl_pe.utils.setup_logging import setup_logging
 from nl_pe.utils.utils import get_doc_text_list
-import unicodedata
 from pathlib import Path
-from nl_pe.llm.prompter import Prompter
-from sklearn.metrics import average_precision_score
-from sklearn.linear_model import LinearRegression
-import warnings
-
 
 
 class EvalManager:
@@ -28,62 +20,64 @@ class EvalManager:
         self.selected_trec_measures = self.config.get("measures", pytrec_eval.supported_measures)
         self.qrels_path = self.config.get("qrels_path")
         self.qrels_dict = self.load_pytrec_eval_qrels(self.qrels_path)
-
         self.results_dir = Path(self.eval_dir) / "per_query_results"
+
+        # Load method lists from config
+        self.per_query_methods = self.config.get("per_query_methods", [])
+        self.all_query_methods = self.config.get("all_query_methods", [])
+        self.required_files = self.config.get("required_files", [])
+
         self.all_query_trec_eval_results = {}
-        self.all_eval_results_path = Path(self.eval_dir) / "all_queries_eval_results.jsonl"
+        #any other global containers here
 
-    def load_config(self):
-        config_path = os.path.join(self.eval_dir, "eval_config.yaml")
-        with open(config_path, "r") as config_file:
-            self.config = yaml.safe_load(config_file)
-
-    def setup_logger(self):
-        self.logger = setup_logging(self.__class__.__name__, self.config, output_file=os.path.join(self.eval_dir, "evaluation.log"))
 
     def evaluate_experiment(self):
         self.logger.info("Starting evaluation...")
 
-        # Check if all required output files exist
-        required_files = [
-            self.all_eval_results_path,
-        ]
+        # Build required output file paths
+        required_file_paths = [Path(self.eval_dir) / file for file in self.required_files]
 
-        if self.skip_existing and all(file.exists() for file in required_files):
+        if self.skip_existing and all(file.exists() for file in required_file_paths):
             print(f"Skipping evaluation for {self.eval_dir} as all required output files already exist.")
             return
 
         if not self.results_dir.exists():
-            print(f"Results directory {self.results_dir} does not exist")
+            print(f"Per query results directory {self.results_dir} does not exist")
             return None
-
+        
+        # Process per-query methods
         for query_dir in self.results_dir.iterdir():
             if query_dir.is_dir(): 
                 self.curr_query_dir = query_dir
                 self.curr_qid = query_dir.name
                 self.curr_trec_file_path = Path(self.curr_query_dir) / "trec_results_raw.txt"
                 self.curr_dedup_trec_file_path = Path(self.curr_query_dir) / "trec_results_deduplicated.txt"
-                self.curr_query_eval_results_path = Path(self.curr_query_dir) / "eval_results.jsonl"
                 self.curr_query_detailed_results_path = Path(self.curr_query_dir) / "detailed_results.json"
 
                 try:
-                    self.evaluate_single_query()
+                    # Run per-query methods specified in config
+                    for method_name in self.per_query_methods:
+                        if hasattr(self, method_name):
+                            method = getattr(self, method_name)
+                            self.logger.debug(f"Running per-query method: {method_name} for query {self.curr_qid}")
+                            method()
+                        else:
+                            self.logger.error(f"Method {method_name} not found in EvalManager class")
                 except Exception as e:
                     self.logger.error(f"Error evaluating query {self.curr_qid}: {e}")
 
-        self.curr_query_dir = None
-        self.curr_qid = None
-        self.curr_trec_file_path = None
-        self.curr_dedup_trec_file_path = None
-        self.curr_query_eval_results_path = None
-        self.curr_query_detailed_results_path = None
-
-        #aggregate results accross all queries 
-        self.write_all_queries_eval_results()
+        # Run all-query methods specified in config
+        for method_name in self.all_query_methods:
+            if hasattr(self, method_name):
+                method = getattr(self, method_name)
+                self.logger.info(f"Running all-query method: {method_name}")
+                method()
+            else:
+                self.logger.error(f"Method {method_name} not found in EvalManager class")
 
         self.logger.info("Evaluation completed.")
 
-    def evaluate_single_query(self):
+    def trec_evaluate_single_query(self):
 
         # Remove duplicates from TREC file and save deduplicated version
         deduped_lines = self.deduplicate_trec_results()
@@ -95,8 +89,11 @@ class EvalManager:
         evaluator = pytrec_eval.RelevanceEvaluator(self.qrels_dict, self.selected_trec_measures)
         per_query_eval_results = evaluator.evaluate(results)
 
+        # 
+        curr_query_trec_eval_results_path = Path(self.curr_query_dir) / "trec_eval_results.jsonl"
+
         # Write per-query trec evaluation results
-        self.write_query_trec_jsonl(self.curr_query_eval_results_path, per_query_eval_results)
+        self.write_query_trec_jsonl(curr_query_trec_eval_results_path, per_query_eval_results)
 
         # Store results for calculating means and std_devs
         self.all_query_trec_eval_results[self.curr_qid] = per_query_eval_results[self.curr_qid]
@@ -137,7 +134,7 @@ class EvalManager:
                 json.dump({"qid": qid, **eval_result}, file)
                 file.write("\n")
 
-    def write_all_queries_eval_results(self):
+    def write_all_queries_eval_trec_results(self):
         mean_results = {}
         std_dev_results = {}
 
@@ -151,9 +148,19 @@ class EvalManager:
 
         all_eval_results = {**mean_results, **std_dev_results}
         
-        with open(self.all_eval_results_path, "w") as file:
+        all_trec_eval_results_path = Path(self.eval_dir) / "all_queries_trec_eval_results.jsonl"
+
+        with open(all_trec_eval_results_path, "w") as file:
             json.dump(all_eval_results, file)
             file.write("\n")
+
+    def load_config(self):
+        config_path = os.path.join(self.eval_dir, "eval_config.yaml")
+        with open(config_path, "r") as config_file:
+            self.config = yaml.safe_load(config_file)
+
+    def setup_logger(self):
+        self.logger = setup_logging(self.__class__.__name__, self.config, output_file=os.path.join(self.eval_dir, "evaluation.log"))
 
 
 if __name__ == "__main__":
