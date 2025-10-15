@@ -74,7 +74,7 @@ class ExperimentManager():
                 else:
                     self.logger.error(f'Failed to rank query {qid} -- empty result[\'top_k_psgs\']')
             except Exception as e:
-                self.logger.error(f'Failed to rank query {qid}: {str(e)}')
+                self.logger.error(f'Failed to rank or write results for query {qid}: {str(e)}')
             
     def write_query_result(self, qid, result):
         """
@@ -92,10 +92,9 @@ class ExperimentManager():
 
         trec_results = []
         top_k_psgs = result.get('top_k_psgs', [])
-        for p_index, psg in enumerate(top_k_psgs):
-            pid = psg['pid']
-            score = len(top_k_psgs) - p_index
-            trec_results.append(f"{qid} Q0 {pid} {p_index + 1} {score} llm_reranker_tests")
+        for p_rank, pid in enumerate(top_k_psgs):
+            score = len(top_k_psgs) - p_rank
+            trec_results.append(f"{qid} Q0 {pid} {p_rank + 1} {score} run")
 
         with open(trec_file_path, "w") as trec_file:
             trec_file.write("\n".join(trec_results))
@@ -118,7 +117,7 @@ class ExperimentManager():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run experiments in the specified directory.")
-    parser.add_argument("-d", "--exp-dir", type=str, required=True, help="Path to the experiment directory containing config.yaml")
+    parser.add_argument("-c", "--exp-dir", type=str, required=True, help="Path to the experiment directory containing config.yaml")
     parser.add_argument("-e", "--exp-type", type=str, required=True, help="Name of the experiment method to run (e.g., index_corpus)")
     args = parser.parse_args()
 

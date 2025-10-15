@@ -28,7 +28,7 @@ class BaseEmbedder(ABC):
 
     def __init__(self, config):
         self.config = config
-        self.embedding_config = self.config.get('embedding', {}),
+        self.embedding_config = self.config.get('embedding', {})
         self.data_config = self.config.get('data', {})
         self.logger = setup_logging(self.__class__.__name__, config = self.config, output_file=os.path.join(self.config['exp_dir'], "experiment.log"))
         self.normalize = self.embedding_config.get('normalize', True)

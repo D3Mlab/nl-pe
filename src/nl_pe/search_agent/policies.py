@@ -1,7 +1,6 @@
 
 from abc import ABC, abstractclassmethod, abstractmethod
 from nl_pe.utils.setup_logging import setup_logging
-from .registry import COMPONENT_CLASSES 
 
 class BasePolicy(ABC):
 
@@ -9,6 +8,8 @@ class BasePolicy(ABC):
         
         self.config = config
         self.logger = setup_logging(self.__class__.__name__, self.config)
+
+        from .registry import COMPONENT_CLASSES 
         self.COMPONENT_CLASSES = COMPONENT_CLASSES
         self.components = {}
 
@@ -21,10 +22,12 @@ class BasePolicy(ABC):
         #check if we've already instantiated the component)
         if comp_name not in self.components:
             #instantiate new component
+            self.logger.debug(f'Instantiating component: {comp_name}')
             comp_class = self.COMPONENT_CLASSES.get(comp_name)
             if not comp_class:
                 raise ValueError(f"Component class for {comp_name} not found.")
             self.curr_comp_inst = comp_class(config=self.config)
+            self.logger.debug(f'Component instance created: {self.curr_comp_inst}')
             self.components[comp_name] = self.curr_comp_inst
         else:
             self.curr_comp_inst = self.components[comp_name]
