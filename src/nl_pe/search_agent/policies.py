@@ -1,7 +1,7 @@
 
 from abc import ABC, abstractclassmethod, abstractmethod
-#from search_agent import COMPONENT_CLASSES
 from nl_pe.utils.setup_logging import setup_logging
+from .registry import COMPONENT_CLASSES 
 
 class BasePolicy(ABC):
 
@@ -9,15 +9,12 @@ class BasePolicy(ABC):
         
         self.config = config
         self.logger = setup_logging(self.__class__.__name__, self.config)
-
-        from .registry import COMPONENT_CLASSES 
         self.COMPONENT_CLASSES = COMPONENT_CLASSES
-
         self.components = {}
 
     @abstractmethod
     def next_action(self, state) -> tuple:
-   #return: (<method>, <args>) or None if no next action
+    #return the method from the component instance (e.g. rank() from DenseRetriever) or None if no next action
          raise NotImplementedError("This method must be implemented by a subclass.")
     
     def set_component_instance(self, comp_name):
@@ -51,33 +48,14 @@ class PipelinePolicy(BasePolicy):
         if state.get("terminate"):
             return None
 
-        if not state.get("preprocessing_done"):
-            preprocess_comp_name = self.config["agent"]['preprocessing']['component']
-            #get component class instance (e.g. AgentLogic), sets self.curr_comp_inst
-            self.set_component_instance(preprocess_comp_name)
-            self.curr_method_name = self.config["agent"]['preprocessing']['method']
-
-            self.logger.debug(f'next action: {preprocess_comp_name}.{self.curr_method_name}')
-
-            #e.g. return AgentLogic's preprocess_batch_sequential() method
-            return getattr(self.curr_comp_inst, self.curr_method_name)
-
-        # If all steps are completed and pipeline iterations remaining, reset cnts and repeat the pipeline, else return None to terminate
+        # If all steps are completed and there are pipeline iterations remaining, reset cnts and repeat the pipeline, else return None to terminate
         if self.current_step_cnt >= len(self.steps):
             self.current_step_cnt = 0
             self.iteration_cnt += 1
-            state["iteration"] = self.iteration_cnt
+            #state["iteration"] = self.iteration_cnt
 
             if self.iteration_cnt >= self.max_pipeline_iterations:
-                postprocess_comp_name = self.config["agent"]['postprocessing']['component']
-                #get component class instance (e.g. AgentLogic), sets self.curr_comp_inst
-                self.set_component_instance(postprocess_comp_name)
-                self.curr_method_name = self.config["agent"]['postprocessing']['method']
-
-                self.logger.debug(f'next action: {postprocess_comp_name}.{self.curr_method_name}')
-
-                #e.g. return AgentLogic's postprocess_pw() method
-                return getattr(self.curr_comp_inst, self.curr_method_name)
+                return None
                 
         step = self.steps[self.current_step_cnt]
         self.current_step_cnt += 1

@@ -69,7 +69,7 @@ class ExperimentManager():
             try:
                 self.logger.info(f"Ranking query {qid}: {query}")
 
-                result = self.agent.rank(query)
+                result = self.agent.act(query)
 
                 if result['top_k_psgs']:
                     self.logger.info('Rank successful')
@@ -80,8 +80,28 @@ class ExperimentManager():
                 self.logger.error(f'Failed to rank query {qid}: {str(e)}')
             
     def write_query_result(self, qid, result):
-        pass
+        """
+        Write two files: 
+        1) TREC run file : trec_results_raw.txt (may have duplicates from LLM reranking)
+        2) JSON: detailed_results.json
+        """
+        query_result_dir = self.results_dir / f"{qid}"
+        query_result_dir.mkdir(exist_ok=True)
+        detailed_results_path = query_result_dir / "detailed_results.json"
+        trec_file_path = query_result_dir / "trec_results_raw.txt"
 
+        with open(detailed_results_path, 'w') as file:
+            json.dump(result, file, indent=4)
+
+        trec_results = []
+        top_k_psgs = result.get('top_k_psgs', [])
+        for p_index, psg in enumerate(top_k_psgs):
+            pid = psg['pid']
+            score = len(top_k_psgs) - p_index
+            trec_results.append(f"{qid} Q0 {pid} {p_index + 1} {score} llm_reranker_tests")
+
+        with open(trec_file_path, "w") as trec_file:
+            trec_file.write("\n".join(trec_results))
 
 
     def load_config(self):

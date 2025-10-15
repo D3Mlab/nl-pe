@@ -10,5 +10,5 @@ class BaseAgent(ABC):
         self.logger = setup_logging(self.__class__.__name__, self.config)
 
     @abstractmethod
-    def rank(self, query: str) -> dict:
+    def act(self, query: str) -> dict:
          raise NotImplementedError("This method must be implemented by a subclass.")
