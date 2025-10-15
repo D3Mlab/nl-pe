@@ -1,0 +1,39 @@
+agent:
+  agent_class: GeneralAgent
+  max_pipeline_iterations: 45
+  policy: PipelinePolicy
+  policy_steps:
+  - component: AgentLogic
+    method: get_next_batch
+  - component: Prompter
+    method: pw_rerank
+  postprocessing:
+    component: AgentLogic
+    method: pw_postprocess
+  preprocessing:
+    component: AgentLogic
+    method: preprocess_batch_sequential_in_batch_shuffle
+  score_agg_func: amean
+data:
+  dataloader_class: PyseriniLoader
+  index: msmarco-v1-passage
+  k_input: 30
+  run_path: data/dl19-passage/run.msmarco-v1-passage.bm25-default.dl19_sorted.txt
+  topics: dl19-passage
+  use_simple_pids: true
+llm:
+  model_class: LLMFactoryLLM
+  model_name: gpt-4o
+  num_retries: 3
+  temperature: 1
+logging:
+  level: DEBUG
+n_labels: 4
+random_seed: 42
+rerank:
+  batch_size: 10
+  n_rescores: 15
+templates:
+  label_macro_name: umbrella_instr
+  pw_rerank: pw_rerank.jinja2
+  template_dir: prompt_templates

@@ -31,15 +31,12 @@ class ExperimentManager():
         index_method_name = self.embedding_config.get('index_method', '')
         self.index_method = getattr(self.embedder, index_method_name)
 
-        #inputs to index methods:
-        # texts_csv_path, index_path, batch_size, prompt
-
         start_time = time.time()
 
         self.index_method(
             texts_csv_path = self.data_config.get('d_text_csv', ''),
             index_path = self.data_config.get('index_path', ''),
-            batch_size = self.embedding_config.get('batch_size', None),
+            inference_batch_size = self.embedding_config.get('inference_batch_size', None),
             prompt = self.embedding_config.get('doc_prompt', '')
         )
 

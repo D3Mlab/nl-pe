@@ -21,20 +21,27 @@ import faiss
 import shelve
 import numpy as np
 import os
+import heapq, io, torch, shelve
 from nl_pe.utils.setup_logging import setup_logging
 
 class BaseEmbedder(ABC):
 
     def __init__(self, config):
         self.config = config
-        self.embedding_config = self.config.get('embedding', {})
+        self.embedding_config = self.config.get('embedding', {}),
+        self.data_config = self.config.get('data', {})
         self.logger = setup_logging(self.__class__.__name__, config = self.config, output_file=os.path.join(self.config['exp_dir'], "experiment.log"))
         self.normalize = self.embedding_config.get('normalize', True)
         self.model_name = self.embedding_config.get('model', '')
         self.matryoshka_dim = self.embedding_config.get('matryoshka_dim', None)
+        self.embeddings_path = self.data_config.get('index_path', '')
+
+        #knn:
+        self.k = self.embedding_config.get('k')
+        self.similarity_batch_size = self.embedding_config.get('similarity_batch_size')
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        
+
     @abstractmethod
     def embed_documents_batch(self, texts: list[str], prompt = '') -> Tensor:
         """
@@ -42,7 +49,7 @@ class BaseEmbedder(ABC):
         """
         raise NotImplementedError("This method must be implemented by a subclass.")
 
-    def save_embeddings_torch(self, texts_csv_path = '', index_path = '', batch_size = None, prompt = ''):
+    def save_embeddings_torch(self, texts_csv_path = '', index_path = '', inference_batch_size = None, prompt = ''):
         """
         Reads a CSV where the first column is the text to embed.
         Saves only the embeddings tensor to index_path for maximum efficiency.
@@ -55,14 +62,14 @@ class BaseEmbedder(ABC):
         self.logger.debug(f"Loading {len(texts)} documents from CSV for embedding")
 
         num_docs = len(texts)
-        batch_size = batch_size or num_docs
+        inference_batch_size = inference_batch_size or num_docs
         all_embeddings = []
 
-        for i in range(0, num_docs, batch_size):
-            batch_texts = texts[i:i + batch_size]
-            self.logger.debug(f"Processing embedding batch {i//batch_size + 1}/{(num_docs + batch_size - 1) // batch_size} with {len(batch_texts)} documents")
+        for i in range(0, num_docs, inference_batch_size):
+            batch_texts = texts[i:i + inference_batch_size]
+            self.logger.debug(f"Processing embedding batch {i//inference_batch_size + 1}/{(num_docs + inference_batch_size - 1) // inference_batch_size} with {len(batch_texts)} documents")
 
-            embeddings_tensor = self.embed_documents_batch(batch_texts)
+            embeddings_tensor = self.embed_documents_batch(batch_texts, prompt = prompt)
             self.logger.debug(f"Embeddings tensor device: {embeddings_tensor.device}, shape: {embeddings_tensor.shape}")
 
             all_embeddings.append(embeddings_tensor)
@@ -75,18 +82,18 @@ class BaseEmbedder(ABC):
         torch.save(all_embeddings, index_path)
         self.logger.info("Saved embeddings tensor to %s", index_path)
 
-    def embed_all_docs_faiss_exact(self, texts_csv_path='', index_path='', batch_size=None, prompt = ''):
+    def embed_all_docs_faiss_exact(self, texts_csv_path='', index_path='', inference_batch_size=None, prompt = ''):
         """Embed all documents and create an exact FAISS index."""
         self.logger.debug(f"Creating FAISS index from {texts_csv_path}")
         df = pd.read_csv(texts_csv_path, header=0)
         texts = df.iloc[:, 0].tolist()
 
         num_docs = len(texts)
-        batch_size = batch_size or num_docs
-        self.logger.debug(f"Processing {num_docs} docs in batches of {batch_size}")
+        inference_batch_size = inference_batch_size or num_docs
+        self.logger.debug(f"Processing {num_docs} docs in batches of {inference_batch_size}")
 
         # Embed first batch to get dimensionality and add to index
-        first_batch = self.embed_documents_batch(texts[:batch_size])
+        first_batch = self.embed_documents_batch(texts[:inference_batch_size], prompt=prompt)
         d = first_batch.shape[1]
         self.logger.debug(f"Embedding dimension: {d}")
 
@@ -103,12 +110,12 @@ class BaseEmbedder(ABC):
         self.logger.debug("Added first batch to FAISS index")
 
         # Process remaining batches
-        for i in range(batch_size, num_docs, batch_size):
-            batch_texts = texts[i:i + batch_size]
-            embeddings_tensor = self.embed_documents_batch(batch_texts)
+        for i in range(inference_batch_size, num_docs, inference_batch_size):
+            batch_texts = texts[i:i + inference_batch_size]
+            embeddings_tensor = self.embed_documents_batch(batch_texts, prompt=prompt)
             batch_embeddings = embeddings_tensor.detach().cpu().numpy()
             index.add(batch_embeddings)
-            self.logger.debug(f"Added batch {i//batch_size + 1}/{(num_docs + batch_size - 1)//batch_size}")
+            self.logger.debug(f"Added batch {i//inference_batch_size + 1}/{(num_docs + inference_batch_size - 1)//inference_batch_size}")
 
         # Move index back to CPU if GPU was used and save
         if use_gpu:
@@ -116,9 +123,7 @@ class BaseEmbedder(ABC):
         faiss.write_index(index, index_path)
         self.logger.info(f"Saved FAISS exact index to {index_path}")
 
-
-
-    def embed_doc_batches_db(self, texts_csv_path='', index_path='', batch_size=10000, prompt = ''):
+    def embed_doc_batches_db(self, texts_csv_path='', index_path='', inference_batch_size=None, prompt = ''):
         self.logger.debug(f"Creating shelve database from {texts_csv_path}")
 
         with shelve.open(index_path, writeback=False) as db:
@@ -126,16 +131,16 @@ class BaseEmbedder(ABC):
             num_docs = len(df)
             self.logger.debug(f"Loaded {num_docs} documents for shelve storage")
 
-            if not batch_size:
-                batch_size = num_docs
+            if not inference_batch_size:
+                inference_batch_size = num_docs
 
-            for i in range(0, num_docs, batch_size):
-                batch_df = df.iloc[i:i + batch_size]
+            for i in range(0, num_docs, inference_batch_size):
+                batch_df = df.iloc[i:i + inference_batch_size]
                 texts = batch_df.iloc[:, 0].tolist()
 
-                self.logger.debug(f"Processing shelve batch {i//batch_size + 1}/{(num_docs + batch_size - 1) // batch_size} with {len(texts)} documents")
+                self.logger.debug(f"Processing shelve batch {i//inference_batch_size + 1}/{(num_docs + inference_batch_size - 1) // inference_batch_size} with {len(texts)} documents")
 
-                embeddings_tensor = self.embed_documents_batch(texts)
+                embeddings_tensor = self.embed_documents_batch(texts, prompt=prompt)
                 self.logger.debug(f"Batch embeddings device: {embeddings_tensor.device}, shape: {embeddings_tensor.shape}")
 
                 # Keep embeddings on GPU and use torch.save for each embedding
@@ -151,24 +156,25 @@ class BaseEmbedder(ABC):
 
                 db.sync()  # force flush to disk
                 self.logger.info("Processed batch %d/%d",
-                                (i // batch_size) + 1,
-                                (num_docs + batch_size - 1) // batch_size)
+                                (i // inference_batch_size) + 1,
+                                (num_docs + inference_batch_size - 1) // inference_batch_size)
 
             self.logger.info("Saved embeddings to shelve db %s", index_path)
 
-    def exact_knn_from_torch_all_in_mem(self, query: str, k=10, prompt='', embeddings_path='') -> list[int]:
+    def exact_knn_from_torch_all_in_mem(self, state) -> list[int]:
         #for small corpora only, loads all embeddings to GPU/CPU and uses a single matrix-vector multiply
+        self.logger.debug(f"Starting KNN search for query with k={self.k}")
 
-        self.logger.debug(f"Starting KNN search for query with k={k}")
+        query = state.get("query")    
 
         # Embed the query
-        query_emb = self.embed_documents_batch([query], prompt=prompt)[0]
+        query_emb = self.embed_documents_batch([query], prompt=self.embedding_config.get("query_prompt", ''))[0]
         self.logger.debug(f"query_emb device after embedding: {query_emb.device}, shape={query_emb.shape}")
 
         # Load embeddings directly as a single tensor onto GPU/CPU
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.logger.debug(f"Loading embeddings tensor from {embeddings_path} to {device}")
-        embeddings_tensor = torch.load(embeddings_path, map_location=device)
+        self.logger.debug(f"Loading embeddings tensor from {self.embeddings_path} to {device}")
+        embeddings_tensor = torch.load(self.embeddings_path, map_location=device)
         self.logger.debug(f"Loaded embeddings tensor: shape={embeddings_tensor.shape}, device={embeddings_tensor.device}")
 
         # Move query to same device
@@ -179,96 +185,81 @@ class BaseEmbedder(ABC):
         self.logger.debug(f"similarities: device={similarities.device}, shape={similarities.shape}")
 
         # Top-k retrieval
-        _, top_k_indices = torch.topk(similarities, k, largest=True)
+        _, top_k_indices = torch.topk(similarities, self.k, largest=True)
         self.logger.debug(f"Top-k indices: {top_k_indices.tolist()}")
 
-        return top_k_indices.tolist()  
+        state['top_k_psgs'] = top_k_indices.tolist()
 
-    def exact_knn_from_faiss(self, query: str, k=10, prompt='', index_path='') -> list[str]:
-        query_emb = self.embed_documents_batch([query], prompt=prompt)[0]
+    def exact_knn_from_faiss(self, state) -> list[str]:
+        query = state.get("query")
+        
+        query_emb = self.embed_documents_batch([query], prompt=self.embedding_config.get("query_prompt", ''))[0]
         self.logger.debug(f"query_emb device after embedding: {query_emb.device}")
 
         # Since doc IDs are 0 to N-1 in CSV order, we can generate them directly from indices
-        index = faiss.read_index(index_path)
+        index = faiss.read_index(self.embeddings_path)
         query_emb_np = query_emb.detach().cpu().numpy().reshape(1, -1)
         self.logger.debug(f"query_emb_np created from query_emb.cpu().numpy(), shape: {query_emb_np.shape}")
 
-        distances, indices = index.search(query_emb_np, k)
+        distances, indices = index.search(query_emb_np, self.k)
         self.logger.debug(f"FAISS search completed, found {len(indices[0])} results")
+        state['top_k_psgs'] = indices[0].tolist()
 
-        # Convert indices directly to doc IDs (0 to N-1)
-        result_doc_ids = [str(i) for i in indices[0]]
-        self.logger.debug(f"Final FAISS results: {result_doc_ids}")
-
-        return result_doc_ids
-
-    def exact_knn_from_db(self, query: str, k=10, prompt='', db_path='', batch_size=1000) -> list[str]:
+    def exact_knn_from_db(self, state) -> list[str]:
         """
-        Memory-efficient KNN retrieval using batched processing.
-        Only keeps top-k (or batch_size) highest scoring documents in memory.
+        Batched KNN retrieval:
+        - Processing embeddings in GPU batches
+        - Keeping only top-k results in a bounded heap
         """
-        query_emb = self.embed_documents_batch([query], prompt=prompt)[0]
-        self.logger.debug(f"query_emb device after embedding: {query_emb.device}")
 
+        query = state.get("query")
+        query_emb = self.embed_documents_batch([query], prompt=self.embedding_config.get("query_prompt", ''))[0]
         query_np = query_emb.detach().cpu().numpy()
-        self.logger.debug(f"query_np created from query_emb.cpu().numpy()")
+        k = getattr(self, "k", 10)  # fallback default if not set
 
-        # Use a max heap to track top-k results efficiently
-        import heapq
-        top_k_heap = []  # Will store (negative similarity, doc_id) for min-heap behavior
+        top_k_heap = []  # min-heap of (similarity, doc_id)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        with shelve.open(db_path) as db:
-            # Process in batches to avoid loading all embeddings at once
+        with shelve.open(self.embeddings_path, "r") as db:
             all_keys = list(db.keys())
             total_docs = len(all_keys)
-            self.logger.debug(f"Processing {total_docs} total documents in batches of {batch_size}")
+            self.logger.debug(f"Processing {total_docs} total docs in batches of {self.similarity_batch_size}")
 
-            for i in range(0, total_docs, batch_size):
-                batch_keys = all_keys[i:i + batch_size]
-                batch_embeddings = []
-                self.logger.debug(f"Processing batch {i//batch_size + 1}, keys: {batch_keys[:3]}...")  # Show first 3 keys
+            for i in range(0, total_docs, self.similarity_batch_size):
+                batch_keys = all_keys[i:i + self.similarity_batch_size]
 
-                # Load batch embeddings using torch.load to preserve GPU tensors
+                # --- Load and stack batch embeddings ---
+                batch_embs = []
                 for key in batch_keys:
-                    emb_bytes = db[key]
-                    import io
-                    buffer = io.BytesIO(emb_bytes)
-                    emb = torch.load(buffer)
-                    self.logger.debug(f"Loaded embedding for doc_id {key}, device: {emb.device}")
-                    batch_embeddings.append(emb.detach().cpu().numpy())
+                    buffer = io.BytesIO(db[key])
+                    emb = torch.load(buffer, map_location="cpu").float()
+                    batch_embs.append(emb)
 
-                # Vectorized similarity computation for this batch with PyTorch GPU acceleration
-                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                self.logger.debug(f"Batch processing - Target device: {device}")
+                batch_tensor = torch.stack(batch_embs).to(device)
+                query_tensor = torch.tensor(query_np, dtype=torch.float32, device=device)
 
-                batch_embeddings_tensor = torch.tensor(batch_embeddings, dtype=torch.float32).to(device)
-                self.logger.debug(f"batch_embeddings_tensor device after .to(device): {batch_embeddings_tensor.device}")
+                # --- Compute cosine similarity (vectorized) ---
+                sim = torch.mv(batch_tensor, query_tensor).tolist()
 
-                query_tensor = torch.tensor(query_np, dtype=torch.float32).to(device)
-                self.logger.debug(f"query_tensor device after .to(device): {query_tensor.device}")
+                # --- Update top-k heap ---
+                for key, s in zip(batch_keys, sim):
+                    if len(top_k_heap) < k:
+                        heapq.heappush(top_k_heap, (s, key))
+                    else:
+                        heapq.heappushpop(top_k_heap, (s, key))
 
-                batch_similarities = torch.mv(batch_embeddings_tensor, query_tensor).tolist()
-                self.logger.debug(f"batch_similarities computed, length: {len(batch_similarities)}")
+                del batch_embs, batch_tensor  # free GPU memory
+                torch.cuda.empty_cache()
 
-                # Update top-k results for this batch
-                for key, similarity in zip(batch_keys, batch_similarities):
-                    heapq.heappush(top_k_heap, (similarity, key))
-                    # Keep only top-k (or batch_size) items in heap
-                    if len(top_k_heap) > max(k, batch_size):
-                        heapq.heappop(top_k_heap)
+                self.logger.debug(f"Processed batch {i//self.similarity_batch_size + 1}/{(total_docs - 1)//self.similarity_batch_size + 1}")
 
-        # Extract final top-k results (heap contains lowest scores first)
-        # We need to sort by similarity (descending) to get actual top-k
-        top_k_results = []
-        while top_k_heap:
-            similarity, doc_id = heapq.heappop(top_k_heap)
-            top_k_results.append((similarity, doc_id))
+        # --- Sort heap descending by similarity ---
+        top_k_results = sorted(top_k_heap, key=lambda x: x[0], reverse=True)
+        self.logger.debug(f"Final top-{k} doc_ids: {[doc_id for _, doc_id in top_k_results]}")
+        top_k_psgs = [doc_id for _, doc_id in top_k_results]
+        state['top_k_psgs'] = top_k_psgs
 
-        # Sort by similarity (highest first) and return top-k doc IDs
-        top_k_results.sort(reverse=True, key=lambda x: x[0])
-        self.logger.debug(f"Final top-k results: {[doc_id for _, doc_id in top_k_results[:k]]}")
 
-        return [doc_id for _, doc_id in top_k_results[:k]]
 
 class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
 
@@ -318,8 +309,8 @@ class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
             return last_hidden_states[:, -1]
         else:
             sequence_lengths = attention_mask.sum(dim=1) - 1
-            batch_size = last_hidden_states.shape[0]
-            return last_hidden_states[torch.arange(batch_size, device=last_hidden_states.device), sequence_lengths]
+            inference_batch_size = last_hidden_states.shape[0]
+            return last_hidden_states[torch.arange(inference_batch_size, device=last_hidden_states.device), sequence_lengths]
 
     @staticmethod
     def _get_detailed_instruct(task_description: str, query: str) -> str:
