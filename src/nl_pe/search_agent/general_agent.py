@@ -10,9 +10,10 @@ class GeneralAgent(BaseAgent):
 
         from nl_pe.search_agent.registry import POLICY_CLASSES
         self.policy_class = POLICY_CLASSES.get(self.agent_config.get('policy'))
+        self.policy = self.policy_class(self.config)
 
     def act(self, query: str) -> dict:
-        self.policy = self.policy_class(self.config)
+
         self.curr_state = {
             "query": query,
             'terminate': False

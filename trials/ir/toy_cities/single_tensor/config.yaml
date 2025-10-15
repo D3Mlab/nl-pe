@@ -9,6 +9,7 @@ data:
   d_text_csv: data/ir/toy_cities/docs.csv
   q_text_csv: data/ir/toy_cities/queries.csv
   index_path: data/ir/toy_cities/qwen_600M/no_prompts/index.pt #suffix -- shelve: .db, faiss: .index
+device: cpu
 embedding:
   class: HuggingFaceEmbedderSentenceTransformers  
   model: Qwen/Qwen3-Embedding-0.6B
@@ -20,6 +21,6 @@ embedding:
   index_method: save_embeddings_torch
   retrieval_method: exact_knn_from_torch_all_in_mem
   k: 10
-  similarity_batch_size: 1 
+  similarity_batch_size: 10 
 logging:
   level: DEBUG

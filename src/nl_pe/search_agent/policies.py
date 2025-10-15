@@ -49,6 +49,10 @@ class PipelinePolicy(BasePolicy):
 
     def next_action(self, state):
         if state.get("terminate"):
+            #reset components
+            #self.components = {}
+            self.current_step_cnt = 0
+            self.iteration_cnt = 0
             return None
 
         # If all steps are completed and there are pipeline iterations remaining, reset cnts and repeat the pipeline, else return None to terminate
@@ -58,6 +62,10 @@ class PipelinePolicy(BasePolicy):
             #state["iteration"] = self.iteration_cnt
 
             if self.iteration_cnt >= self.max_pipeline_iterations:
+                #reset components
+                #self.components = {}
+                self.current_step_cnt = 0
+                self.iteration_cnt = 0
                 return None
                 
         step = self.steps[self.current_step_cnt]
