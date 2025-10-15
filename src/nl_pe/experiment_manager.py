@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import os
 from pathlib import Path
 import time
+import pandas as pd
 from nl_pe.utils.setup_logging import setup_logging
 from nl_pe.embedding import EMBEDDER_CLASSES
 from nl_pe import search_agent
@@ -48,6 +49,40 @@ class ExperimentManager():
         embedding_details_path = os.path.join(self.exp_dir, "embedding_details.json")
         with open(embedding_details_path, 'w') as f:
             json.dump({'embedding_time': embedding_time}, f)
+
+    def ir_exp(self):
+        self.logger.info("Starting IR experiment...")
+
+        self.data_config = self.config.get('data', {})
+
+        agent_class = search_agent.AGENT_CLASSES[self.config.get('agent', {}).get('agent_class')]
+        self.agent = agent_class(self.config)
+
+        self.results_dir = Path(self.exp_dir) / 'per_query_results'
+        self.results_dir.mkdir(exist_ok=True)
+
+        queries_path = self.data_config.get('q_text_csv', '')
+        qs_df = pd.read_csv(queries_path, header=0)
+        queries = qs_df.iloc[:, 0].tolist()
+
+        for qid, query in enumerate(queries):
+            try:
+                self.logger.info(f"Ranking query {qid}: {query}")
+
+                result = self.agent.rank(query)
+
+                if result['top_k_psgs']:
+                    self.logger.info('Rank successful')
+                    self.write_query_result(qid, result)
+                else:
+                    self.logger.error(f'Failed to rank query {qid} -- empty result[\'top_k_psgs\']')
+            except Exception as e:
+                self.logger.error(f'Failed to rank query {qid}: {str(e)}')
+            
+    def write_query_result(self, qid, result):
+        pass
+
+
 
     def load_config(self):
         config_path = os.path.join(self.exp_dir, "config.yaml")
