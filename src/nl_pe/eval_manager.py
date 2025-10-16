@@ -3,6 +3,7 @@ import yaml
 import argparse
 import pytrec_eval
 import json
+import csv
 import numpy as np
 from scipy.stats import norm
 from nl_pe.utils.setup_logging import setup_logging
@@ -27,9 +28,9 @@ class EvalManager:
         self.all_query_methods = self.config.get("all_query_methods", [])
         self.required_files = self.config.get("required_files", [])
 
+        #global containers here
         self.all_query_trec_eval_results = {}
-        #any other global containers here
-
+        self.all_query_knn_times = {}
 
     def evaluate_experiment(self):
         self.logger.info("Starting evaluation...")
@@ -153,6 +154,47 @@ class EvalManager:
         with open(all_trec_eval_results_path, "w") as file:
             json.dump(all_eval_results, file)
             file.write("\n")
+
+    def knn_time_single_query(self):
+        #from self.curr_query_detailed_results_path , which is a json file,
+        #get the value of "knn_time" and store it in self.all_query_knn_times
+        try:
+            with open(self.curr_query_detailed_results_path, 'r') as f:
+                detailed_results = json.load(f)
+                knn_time = detailed_results.get("knn_time")
+                if knn_time is not None:
+                    self.all_query_knn_times[self.curr_qid] = knn_time
+                else:
+                    self.logger.warning(f"Query {self.curr_qid}: knn_time not found in detailed_results.json")
+        except FileNotFoundError:
+            self.logger.error(f"Query {self.curr_qid}: detailed_results.json file not found at {self.curr_query_detailed_results_path}")
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Query {self.curr_qid}: Error parsing JSON file: {e}")
+
+    def write_all_queries_knn_times(self):
+        #write a csv file all_queries_knn_times.csv with two columns: qid, knn_time based on self.all_query_knn_times
+        if not self.all_query_knn_times:
+            self.logger.warning("No KNN times found to write to CSV")
+            return
+
+        csv_path = Path(self.eval_dir) / "all_queries_knn_times.csv"
+
+        try:
+            with open(csv_path, 'w', newline='') as csvfile:
+                fieldnames = ['qid', 'knn_time']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+                # Write header
+                writer.writeheader()
+
+                # Write data rows
+                for qid, knn_time in self.all_query_knn_times.items():
+                    writer.writerow({'qid': qid, 'knn_time': knn_time})
+
+            self.logger.info(f"Successfully wrote KNN times for {len(self.all_query_knn_times)} queries to {csv_path}")
+
+        except Exception as e:
+            self.logger.error(f"Error writing KNN times CSV file: {e}")
 
     def load_config(self):
         config_path = os.path.join(self.eval_dir, "eval_config.yaml")
