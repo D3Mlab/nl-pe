@@ -43,7 +43,7 @@ class ExperimentManager():
         end_time = time.time()
         embedding_time = end_time - start_time
 
-        embedding_details_path = os.path.join(self.exp_dir, "embedding_details.json")
+        embedding_details_path = os.path.join(self.exp_dir, "detailed_results.json")
         with open(embedding_details_path, 'w') as f:
             json.dump({'embedding_time': embedding_time}, f)
 

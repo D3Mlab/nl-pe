@@ -185,10 +185,11 @@ class BaseEmbedder(ABC):
         self.logger.debug(f"similarities: device={similarities.device}, shape={similarities.shape}")
 
         # Top-k retrieval
-        _, top_k_indices = torch.topk(similarities, self.k, largest=True)
+        top_k_scores, top_k_indices = torch.topk(similarities, self.k, largest=True)
         self.logger.debug(f"Top-k indices: {top_k_indices.tolist()}")
 
         state['top_k_psgs'] = top_k_indices.tolist()
+        state['sim_scores'] = top_k_scores.tolist()
 
         #del embeddings_tensor, query_emb, similarities
         #torch.cuda.empty_cache()
@@ -207,6 +208,7 @@ class BaseEmbedder(ABC):
         distances, indices = index.search(query_emb_np, self.k)
         self.logger.debug(f"FAISS search completed, found {len(indices[0])} results")
         state['top_k_psgs'] = indices[0].tolist()
+        state['sim_scores'] = distances[0].tolist()
 
     def exact_knn_from_db(self, state) -> list[str]:
         """
@@ -260,7 +262,9 @@ class BaseEmbedder(ABC):
         top_k_results = sorted(top_k_heap, key=lambda x: x[0], reverse=True)
         self.logger.debug(f"Final top-{k} doc_ids: {[doc_id for _, doc_id in top_k_results]}")
         top_k_psgs = [doc_id for _, doc_id in top_k_results]
+        sim_scores = [score for score, _ in top_k_results]
         state['top_k_psgs'] = top_k_psgs
+        state['sim_scores'] = sim_scores
 
 
 
