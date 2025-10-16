@@ -24,10 +24,13 @@ import os
 import heapq, io, torch, shelve
 import time
 from nl_pe.utils.setup_logging import setup_logging
+import gc
 
 class BaseEmbedder(ABC):
 
     def __init__(self, config):
+        #free_gpu_memory()
+
         self.config = config
         self.embedding_config = self.config.get('embedding', {})
         self.data_config = self.config.get('data', {})
@@ -41,7 +44,7 @@ class BaseEmbedder(ABC):
         self.k = self.embedding_config.get('k')
         self.similarity_batch_size = self.embedding_config.get('similarity_batch_size')
 
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = self.config.get('device', 'cpu')
 
     @abstractmethod
     def embed_documents_batch(self, texts: list[str], prompt = '') -> Tensor:
@@ -174,7 +177,7 @@ class BaseEmbedder(ABC):
         self.logger.debug(f"query_emb device after embedding: {query_emb.device}, shape={query_emb.shape}")
 
         # Load embeddings directly as a single tensor onto GPU/CPU
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device(self.device)
         self.logger.debug(f"Loading embeddings tensor from {self.embeddings_path} to {device}")
         embeddings_tensor = torch.load(self.embeddings_path, map_location=device)
         self.logger.debug(f"Loaded embeddings tensor: shape={embeddings_tensor.shape}, device={embeddings_tensor.device}")
@@ -229,7 +232,7 @@ class BaseEmbedder(ABC):
         k = getattr(self, "k", 10)  # fallback default if not set
 
         top_k_heap = []  # min-heap of (similarity, doc_id)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device(self.device)
 
         with shelve.open(self.embeddings_path, "r") as db:
             all_keys = list(db.keys())
@@ -327,3 +330,11 @@ class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
     @staticmethod
     def _get_detailed_instruct(task_description: str, query: str) -> str:
         return f'Instruct: {task_description}\nQuery:{query}'
+
+
+def free_gpu_memory():
+    # Delete old models / variables
+    gc.collect()
+    torch.cuda.empty_cache()
+    # Optional: force garbage collection for Python objects
+    torch.cuda.synchronize()
