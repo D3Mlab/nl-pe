@@ -19,7 +19,6 @@ embedding:
   normalize: True
   inference_batch_size: Null
   index_method: save_embeddings_torch
-  retrieval_method: exact_knn_from_torch_all_in_mem
   k: 10
   similarity_batch_size: 10 
 logging:

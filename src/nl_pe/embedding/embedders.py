@@ -22,6 +22,7 @@ import shelve
 import numpy as np
 import os
 import heapq, io, torch, shelve
+import time
 from nl_pe.utils.setup_logging import setup_logging
 
 class BaseEmbedder(ABC):
@@ -163,6 +164,7 @@ class BaseEmbedder(ABC):
 
     def exact_knn_from_torch_all_in_mem(self, state) -> list[int]:
         #for small corpora only, loads all embeddings to GPU/CPU and uses a single matrix-vector multiply
+        start_time = time.time()
         self.logger.debug(f"Starting KNN search for query with k={self.k}")
 
         query = state.get("query")    
@@ -189,14 +191,16 @@ class BaseEmbedder(ABC):
         self.logger.debug(f"Top-k indices: {top_k_indices.tolist()}")
 
         state['top_k_psgs'] = top_k_indices.tolist()
-        state['sim_scores'] = top_k_scores.tolist()
+        state['knn_scores'] = top_k_scores.tolist()
+        state['knn_time'] = time.time() - start_time
 
         #del embeddings_tensor, query_emb, similarities
         #torch.cuda.empty_cache()
 
     def exact_knn_from_faiss(self, state) -> list[str]:
+        start_time = time.time()
         query = state.get("query")
-        
+
         query_emb = self.embed_documents_batch([query], prompt=self.embedding_config.get("query_prompt", ''))[0]
         self.logger.debug(f"query_emb device after embedding: {query_emb.device}")
 
@@ -208,7 +212,8 @@ class BaseEmbedder(ABC):
         distances, indices = index.search(query_emb_np, self.k)
         self.logger.debug(f"FAISS search completed, found {len(indices[0])} results")
         state['top_k_psgs'] = indices[0].tolist()
-        state['sim_scores'] = distances[0].tolist()
+        state['knn_scores'] = distances[0].tolist()
+        state['knn_time'] = time.time() - start_time
 
     def exact_knn_from_db(self, state) -> list[str]:
         """
@@ -216,6 +221,7 @@ class BaseEmbedder(ABC):
         - Processing embeddings in GPU batches
         - Keeping only top-k results in a bounded heap
         """
+        start_time = time.time()
 
         query = state.get("query")
         query_emb = self.embed_documents_batch([query], prompt=self.embedding_config.get("query_prompt", ''))[0]
@@ -261,10 +267,9 @@ class BaseEmbedder(ABC):
         # --- Sort heap descending by similarity ---
         top_k_results = sorted(top_k_heap, key=lambda x: x[0], reverse=True)
         self.logger.debug(f"Final top-{k} doc_ids: {[doc_id for _, doc_id in top_k_results]}")
-        top_k_psgs = [doc_id for _, doc_id in top_k_results]
-        sim_scores = [score for score, _ in top_k_results]
-        state['top_k_psgs'] = top_k_psgs
-        state['sim_scores'] = sim_scores
+        state['top_k_psgs'] = [doc_id for _, doc_id in top_k_results]
+        state['knn_scores'] = [score for score, _ in top_k_results]
+        state['knn_time'] = time.time() - start_time
 
 
 
