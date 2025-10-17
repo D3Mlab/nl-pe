@@ -2,11 +2,9 @@
 Embedding module with GPU-accelerated KNN operations and comprehensive debug logging.
 
 KNN Methods:
-- exact_knn_from_embeddings: Full GPU acceleration for torch.save embeddings
-- exact_knn_from_faiss: Optimized FAISS search (no CSV reading)
-- exact_knn_from_db: Memory-efficient batched processing for shelve databases
-
-All methods assume document IDs are 0 to N-1 in CSV order for optimal performance.
+- exact_knn_from_embeddings: Full GPU acceleration for torch.save embeddings (document IDs are 0 to N-1)
+- exact_knn_from_faiss: Optimized FAISS search with arbitrary document IDs from CSV first column
+- exact_knn_from_db: Memory-efficient batched processing for shelve databases with arbitrary document IDs
 """
 
 from transformers import AutoTokenizer, AutoModel
@@ -19,6 +17,7 @@ import pandas as pd
 from sentence_transformers import SentenceTransformer
 import faiss
 import shelve
+import pickle
 import numpy as np
 import os
 import heapq, io, torch, shelve
@@ -90,7 +89,8 @@ class BaseEmbedder(ABC):
         """Embed all documents and create an exact FAISS index."""
         self.logger.debug(f"Creating FAISS index from {texts_csv_path}")
         df = pd.read_csv(texts_csv_path, header=0)
-        texts = df.iloc[:, 0].tolist()
+        doc_ids = df.iloc[:, 0].tolist()
+        texts = df.iloc[:, 1].tolist()
 
         num_docs = len(texts)
         inference_batch_size = inference_batch_size or num_docs
@@ -125,7 +125,8 @@ class BaseEmbedder(ABC):
         if use_gpu:
             index = faiss.index_gpu_to_cpu(index)
         faiss.write_index(index, index_path)
-        self.logger.info(f"Saved FAISS exact index to {index_path}")
+        pickle.dump(doc_ids, open(index_path + "_doc_ids.pkl", 'wb'))
+        self.logger.info(f"Saved FAISS exact index and doc IDs to {index_path}")
 
     def embed_doc_batches_db(self, texts_csv_path='', index_path='', inference_batch_size=None, prompt = ''):
         self.logger.debug(f"Creating shelve database from {texts_csv_path}")
@@ -140,7 +141,8 @@ class BaseEmbedder(ABC):
 
             for i in range(0, num_docs, inference_batch_size):
                 batch_df = df.iloc[i:i + inference_batch_size]
-                texts = batch_df.iloc[:, 0].tolist()
+                doc_ids_batch = batch_df.iloc[:, 0].tolist()
+                texts = batch_df.iloc[:, 1].tolist()
 
                 self.logger.debug(f"Processing shelve batch {i//inference_batch_size + 1}/{(num_docs + inference_batch_size - 1) // inference_batch_size} with {len(texts)} documents")
 
@@ -149,7 +151,7 @@ class BaseEmbedder(ABC):
 
                 # Keep embeddings on GPU and use torch.save for each embedding
                 for j, emb in enumerate(embeddings_tensor):
-                    doc_id = i + j # Implicit doc_id is the row index
+                    doc_id = doc_ids_batch[j]  # Use the actual doc_id from CSV
                     # Use torch.save to preserve GPU tensor without CPU conversion
                     import io
                     buffer = io.BytesIO()
@@ -207,14 +209,15 @@ class BaseEmbedder(ABC):
         query_emb = self.embed_documents_batch([query], prompt=self.embedding_config.get("query_prompt", ''))[0]
         self.logger.debug(f"query_emb device after embedding: {query_emb.device}")
 
-        # Since doc IDs are 0 to N-1 in CSV order, we can generate them directly from indices
+        # Load doc_ids from pickle file
+        doc_ids = pickle.load(open(self.embeddings_path + "_doc_ids.pkl", 'rb'))
         index = faiss.read_index(self.embeddings_path)
         query_emb_np = query_emb.detach().cpu().numpy().reshape(1, -1)
         self.logger.debug(f"query_emb_np created from query_emb.cpu().numpy(), shape: {query_emb_np.shape}")
 
         distances, indices = index.search(query_emb_np, self.k)
         self.logger.debug(f"FAISS search completed, found {len(indices[0])} results")
-        state['top_k_psgs'] = indices[0].tolist()
+        state['top_k_psgs'] = [doc_ids[i] for i in indices[0]]
         state['knn_scores'] = distances[0].tolist()
         state['knn_time'] = time.time() - start_time
 
