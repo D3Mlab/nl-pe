@@ -60,9 +60,10 @@ class ExperimentManager():
 
         queries_path = self.data_config.get('q_text_csv', '')
         qs_df = pd.read_csv(queries_path, header=0)
-        queries = qs_df.iloc[:, 0].tolist()
+        qids = qs_df.iloc[:, 0].tolist()
+        queries = qs_df.iloc[:, 1].tolist()
 
-        for qid, query in enumerate(queries):
+        for qid, query in zip(qids, queries):
             try:
                 self.logger.info(f"Ranking query {qid}: {query}")
 
