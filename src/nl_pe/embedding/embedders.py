@@ -43,7 +43,8 @@ class BaseEmbedder(ABC):
         self.k = self.embedding_config.get('k')
         self.similarity_batch_size = self.embedding_config.get('similarity_batch_size')
 
-        self.device = self.config.get('device', 'cpu')
+        self.inference_device = normalize_device(self.config.get('inference_device', self.config.get('device', 'cpu')))
+        self.tensor_ops_device = normalize_device(self.config.get('tensor_ops_device', self.config.get('device', 'cpu')))
 
     @abstractmethod
     def embed_documents_batch(self, texts: list[str], prompt = '') -> Tensor:
@@ -180,8 +181,8 @@ class BaseEmbedder(ABC):
         query_emb = self.embed_documents_batch([query], prompt=self.embedding_config.get("query_prompt", ''))[0]
         self.logger.debug(f"query_emb device after embedding: {query_emb.device}, shape={query_emb.shape}")
 
-        # Load embeddings directly as a single tensor onto GPU/CPU
-        device = torch.device(self.device)
+        # Load embeddings directly as a single tensor onto tensor_ops_device
+        device = torch.device(self.tensor_ops_device)
         self.logger.debug(f"Loading embeddings tensor from {self.embeddings_path} to {device}")
         embeddings_tensor = torch.load(self.embeddings_path, map_location=device)
         self.logger.debug(f"Loaded embeddings tensor: shape={embeddings_tensor.shape}, device={embeddings_tensor.device}")
@@ -189,7 +190,7 @@ class BaseEmbedder(ABC):
         # Load doc_ids from pickle file
         doc_ids = pickle.load(open(self.embeddings_path + "_doc_ids.pkl", 'rb'))
 
-        # Move query to same device
+        # Move query to tensor_ops_device
         query_emb = query_emb.to(device)
 
         # Compute similarities
@@ -240,7 +241,7 @@ class BaseEmbedder(ABC):
         k = getattr(self, "k", 10)  # fallback default if not set
 
         top_k_heap = []  # min-heap of (similarity, doc_id)
-        device = torch.device(self.device)
+        device = torch.device(self.tensor_ops_device)
 
         with shelve.open(self.embeddings_path, "r") as db:
             all_keys = list(db.keys())
@@ -296,7 +297,7 @@ class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
             model_kwargs={}, #{"device_map": "auto"},
             tokenizer_kwargs={"padding_side": "left"},
             truncate_dim=self.matryoshka_dim,
-            device = self.device
+            device = self.inference_device
         )
 
         device = getattr(self.model, "device", getattr(self.model, "device", "unknown"))
@@ -346,3 +347,14 @@ def free_gpu_memory():
     torch.cuda.empty_cache()
     # Optional: force garbage collection for Python objects
     torch.cuda.synchronize()
+
+
+# Device configuration: embedding operations use inference_device, tensor ops use tensor_ops_device
+def normalize_device(dev):
+    if dev == 'gpu' or dev == 'cuda':
+        return 'cuda:0'
+    elif dev == 'cpu':
+        return 'cpu'
+    else:
+        # Assume it's already a proper device string like 'cuda:1'
+        return dev
