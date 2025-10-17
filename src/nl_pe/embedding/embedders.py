@@ -2,7 +2,7 @@
 Embedding module with GPU-accelerated KNN operations and comprehensive debug logging.
 
 KNN Methods:
-- exact_knn_from_embeddings: Full GPU acceleration for torch.save embeddings (document IDs are 0 to N-1)
+- exact_knn_from_embeddings: Full GPU acceleration for torch.save embeddings with arbitrary document IDs from CSV first column
 - exact_knn_from_faiss: Optimized FAISS search with arbitrary document IDs from CSV first column
 - exact_knn_from_db: Memory-efficient batched processing for shelve databases with arbitrary document IDs
 """
@@ -54,12 +54,13 @@ class BaseEmbedder(ABC):
 
     def save_embeddings_torch(self, texts_csv_path = '', index_path = '', inference_batch_size = None, prompt = ''):
         """
-        Reads a CSV where the first column is the text to embed.
-        Saves only the embeddings tensor to index_path for maximum efficiency.
+        Reads a CSV where the first column is the doc_id and second the text to embed.
+        Saves the embeddings tensor and doc_ids pickle to index_path for maximum efficiency.
         """
         self.logger.debug(f"Reading texts from CSV: {texts_csv_path}")
         df = pd.read_csv(texts_csv_path, header=0)
-        texts = df.iloc[:, 0].tolist()
+        doc_ids = df.iloc[:, 0].tolist()
+        texts = df.iloc[:, 1].tolist()
         self.logger.debug(f"First 3 texts: {texts[:3]}... ")
 
         self.logger.debug(f"Loading {len(texts)} documents from CSV for embedding")
@@ -83,7 +84,8 @@ class BaseEmbedder(ABC):
         # Save tensor directly from GPU
         self.logger.debug(f"Saving embeddings tensor (device: {all_embeddings.device}) to {index_path}")
         torch.save(all_embeddings, index_path)
-        self.logger.info("Saved embeddings tensor to %s", index_path)
+        pickle.dump(doc_ids, open(index_path + "_doc_ids.pkl", 'wb'))
+        self.logger.info("Saved embeddings tensor and doc IDs to %s", index_path)
 
     def embed_all_docs_faiss_exact(self, texts_csv_path='', index_path='', inference_batch_size=None, prompt = ''):
         """Embed all documents and create an exact FAISS index."""
@@ -167,12 +169,12 @@ class BaseEmbedder(ABC):
 
             self.logger.info("Saved embeddings to shelve db %s", index_path)
 
-    def exact_knn_from_torch_all_in_mem(self, state) -> list[int]:
+    def exact_knn_from_torch_all_in_mem(self, state) -> list[str]:
         #for small corpora only, loads all embeddings to GPU/CPU and uses a single matrix-vector multiply
         start_time = time.time()
         self.logger.debug(f"Starting KNN search for query with k={self.k}")
 
-        query = state.get("query")    
+        query = state.get("query")
 
         # Embed the query
         query_emb = self.embed_documents_batch([query], prompt=self.embedding_config.get("query_prompt", ''))[0]
@@ -183,6 +185,9 @@ class BaseEmbedder(ABC):
         self.logger.debug(f"Loading embeddings tensor from {self.embeddings_path} to {device}")
         embeddings_tensor = torch.load(self.embeddings_path, map_location=device)
         self.logger.debug(f"Loaded embeddings tensor: shape={embeddings_tensor.shape}, device={embeddings_tensor.device}")
+
+        # Load doc_ids from pickle file
+        doc_ids = pickle.load(open(self.embeddings_path + "_doc_ids.pkl", 'rb'))
 
         # Move query to same device
         query_emb = query_emb.to(device)
@@ -195,7 +200,7 @@ class BaseEmbedder(ABC):
         top_k_scores, top_k_indices = torch.topk(similarities, self.k, largest=True)
         self.logger.debug(f"Top-k indices: {top_k_indices.tolist()}")
 
-        state['top_k_psgs'] = top_k_indices.tolist()
+        state['top_k_psgs'] = [doc_ids[i] for i in top_k_indices.tolist()]
         state['knn_scores'] = top_k_scores.tolist()
         state['knn_time'] = time.time() - start_time
 
