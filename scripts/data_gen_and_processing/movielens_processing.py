@@ -10,7 +10,7 @@ import numpy as np
 
 # === CONFIG ===
 movie_lens_path = "C:/Users/anton/source/data/ml_25m/"
-output_path = "data/real_docs/movielens/movies_1.csv"
+output_path = "data/real_docs/movielens/docs.csv"
 
 # === LOAD DATA ===
 movies_path = os.path.join(movie_lens_path, "movies.csv")
@@ -63,8 +63,8 @@ movies_merged = movies_merged.sort_values(
 
 # Final dataframe
 final_df = movies_merged[["d_text", "movieId"]].rename(
-    columns={"movieId": "movie_id"}
-)
+    columns={"movieId": "d_id"}
+)[["d_id", "d_text"]]
 
 # === SAVE ===
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
