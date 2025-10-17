@@ -1,3 +1,6 @@
+import argparse
+import itertools
+import pprint
 from beir import util, LoggingHandler
 from beir.datasets.data_loader import GenericDataLoader
 
@@ -16,37 +19,29 @@ logging.basicConfig(format='%(asctime)s - %(message)s',
 dataset = "scifact"
 url = f"https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/{dataset}.zip"
 out_dir = str(pathlib.Path(__file__).parents[3] / "data" / "ir" / "beir")
-data_path = util.download_and_unzip(url, out_dir)
 
-#### Provide the data_path where scifact has been downloaded and unzipped
-corpus, queries, qrels = GenericDataLoader(data_folder=data_path).load()
+def main(force_download=False):
+    expected_data_path = pathlib.Path(out_dir) / dataset
+    if expected_data_path.exists() and not force_download:
+        logging.info(f"Dataset already exists at {expected_data_path}, skipping download.")
+        data_path = str(expected_data_path)
+    else:
+        data_path = util.download_and_unzip(url, out_dir)
 
-#### Inspect the structure and first few elements of each
-print("Corpus structure:")
-print("Type:", type(corpus))
-print("Number of docs:", len(corpus))
-print("First 3 docs:")
-for i, (doc_id, doc) in enumerate(corpus.items()):
-    if i >= 3: break
-    print(f"Doc ID: {doc_id}")
-    print(f"Title: '{doc['title']}'")
-    print(f"Text: '{doc['text'][:200]}...'")
-    print("---")
+    #### Provide the data_path where scifact has been downloaded and unzipped
+    corpus, queries, qrels = GenericDataLoader(data_folder=data_path).load()
 
-print("\nQueries structure:")
-print("Type:", type(queries))
-print("Number of queries:", len(queries))
-print("First 3 queries:")
-for i, (q_id, q) in enumerate(queries.items()):
-    if i >= 3: break
-    print(f"Query ID: {q_id}")
-    print(f"Query: '{q}'")
+    #### Inspect the structure and first few elements of each
+    pp = pprint.PrettyPrinter(indent=4, width=120)
+    print("corpus =")
+    pp.pprint(dict(itertools.islice(corpus.items(), 3)))
+    print("\nqueries =")
+    pp.pprint(dict(itertools.islice(queries.items(), 3)))
+    print("\nqrels =")
+    pp.pprint(dict(itertools.islice(qrels.items(), 3)))
 
-print("\nQrels structure:")
-print("Type:", type(qrels))
-print("Number of qrels:", len(qrels))
-print("First 3 qrels:")
-for i, (q_id, rels) in enumerate(qrels.items()):
-    if i >= 3: break
-    print(f"Query ID: {q_id}")
-    print(f"Relevances: {rels}")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--force_download', action='store_true', help='Force download even if dataset already exists')
+    args = parser.parse_args()
+    main(args.force_download)
