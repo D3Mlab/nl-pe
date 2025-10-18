@@ -7,7 +7,7 @@ KNN Methods:
 - exact_knn_from_db: Memory-efficient batched processing for shelve databases with arbitrary document IDs
 """
 
-from transformers import AutoTokenizer, AutoModel
+#from transformers import AutoTokenizer, AutoModel
 import torch
 import torch.nn.functional as F
 from torch import Tensor
