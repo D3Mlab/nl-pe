@@ -297,7 +297,8 @@ class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
             model_kwargs={}, #{"device_map": "auto"},
             tokenizer_kwargs={"padding_side": "left"},
             truncate_dim=self.matryoshka_dim,
-            device = self.inference_device
+            device = self.inference_device,
+            trust_remote_code=True,  # <-- add this
         )
 
         device = getattr(self.model, "device", getattr(self.model, "device", "unknown"))

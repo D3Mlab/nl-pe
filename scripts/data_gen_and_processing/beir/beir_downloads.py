@@ -15,12 +15,11 @@ logging.basicConfig(format='%(asctime)s - %(message)s',
                     handlers=[LoggingHandler()])
 #### /print debug information to stdout
 
-#### Download scifact.zip dataset and unzip the dataset
-dataset = "scifact"
-url = f"https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/{dataset}.zip"
+#### Download dataset.zip dataset and unzip the dataset
 out_dir = str(pathlib.Path(__file__).parents[3] / "data" / "ir" / "beir")
 
-def main(force_download=False):
+def main(dataset, force_download=False):
+    url = f"https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/{dataset}.zip"
     expected_data_path = pathlib.Path(out_dir) / dataset
     if expected_data_path.exists() and not force_download:
         logging.info(f"Dataset already exists at {expected_data_path}, skipping download.")
@@ -42,6 +41,8 @@ def main(force_download=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument('dataset', help='Name of the dataset to download')
     parser.add_argument('--force_download', action='store_true', help='Force download even if dataset already exists')
     args = parser.parse_args()
-    main(args.force_download)
+    main(args.dataset, args.force_download)
+    
