@@ -84,6 +84,7 @@ class BaseEmbedder(ABC):
         
         # Save tensor directly from GPU
         self.logger.debug(f"Saving embeddings tensor (device: {all_embeddings.device}) to {index_path}")
+        os.makedirs(os.path.dirname(index_path), exist_ok=True)
         torch.save(all_embeddings, index_path)
         pickle.dump(doc_ids, open(index_path + "_doc_ids.pkl", 'wb'))
         self.logger.info("Saved embeddings tensor and doc IDs to %s", index_path)
@@ -127,12 +128,14 @@ class BaseEmbedder(ABC):
         # Move index back to CPU if GPU was used and save
         if use_gpu:
             index = faiss.index_gpu_to_cpu(index)
+        os.makedirs(os.path.dirname(index_path), exist_ok=True)
         faiss.write_index(index, index_path)
         pickle.dump(doc_ids, open(index_path + "_doc_ids.pkl", 'wb'))
         self.logger.info(f"Saved FAISS exact index and doc IDs to {index_path}")
 
     def embed_doc_batches_db(self, texts_csv_path='', index_path='', inference_batch_size=None, prompt = ''):
         self.logger.debug(f"Creating shelve database from {texts_csv_path}")
+        os.makedirs(os.path.dirname(index_path), exist_ok=True)
 
         with shelve.open(index_path, writeback=False) as db:
             df = pd.read_csv(texts_csv_path, header=0)
