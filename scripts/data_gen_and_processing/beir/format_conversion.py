@@ -3,6 +3,31 @@ import os
 import json
 import csv
 
+def process_qrels_tsv_to_txt(tsv_path):
+    """Convert TSV qrels to TXT qrels in standard format."""
+    if not os.path.isfile(tsv_path):
+        print(f"Warning: {tsv_path} not found, skipping.")
+        return
+    dir_name = os.path.dirname(tsv_path)
+    base_name = os.path.basename(tsv_path)
+    name_without_ext = os.path.splitext(base_name)[0]
+    txt_path = os.path.join(dir_name, name_without_ext + '.txt')
+
+    try:
+        with open(tsv_path, 'r', newline='', encoding='utf-8') as tsv_file:
+            reader = csv.reader(tsv_file, delimiter='\t')
+            next(reader, None)  # Skip header
+            with open(txt_path, 'w', encoding='utf-8') as txt_file:
+                for row in reader:
+                    if len(row) == 3:
+                        qid, did, rel = row
+                        txt_file.write(f"{qid} 0 {did} {rel}\n")
+                    else:
+                        print(f"Warning: Skipping invalid row in {tsv_path}: {row}")
+        print(f"Converted qrels {tsv_path} to {txt_path}")
+    except Exception as e:
+        print(f"Error processing qrels {tsv_path}: {e}")
+
 def process_corpus_to_docs(corpus_path, docs_path):
     """Convert corpus.jsonl to docs.csv with d_id and d_text."""
     with (open(corpus_path, 'r', encoding='utf-8') as f_in,
@@ -98,5 +123,11 @@ if __name__ == "__main__":
         process_queries_to_csv(queries_path, train_ids=train_ids, test_ids=test_ids, train_queries_path=train_queries_path, test_queries_path=test_queries_path)
     else:
         process_queries_to_csv(queries_path, queries_csv_path=queries_csv_path)
+
+    # Convert qrels TSV to TXT if they exist
+    if os.path.exists(train_qrels):
+        process_qrels_tsv_to_txt(train_qrels)
+    if os.path.exists(test_qrels):
+        process_qrels_tsv_to_txt(test_qrels)
 
     print("Conversion complete.")
