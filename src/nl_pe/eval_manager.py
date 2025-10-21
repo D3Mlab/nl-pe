@@ -45,10 +45,10 @@ class EvalManager:
         if not self.results_dir.exists():
             print(f"Per query results directory {self.results_dir} does not exist")
             return None
-        
+
         # Process per-query methods
         for query_dir in self.results_dir.iterdir():
-            if query_dir.is_dir(): 
+            if query_dir.is_dir():
                 self.curr_query_dir = query_dir
                 self.curr_qid = query_dir.name
                 self.curr_trec_file_path = Path(self.curr_query_dir) / "trec_results_raw.txt"
@@ -90,14 +90,13 @@ class EvalManager:
         evaluator = pytrec_eval.RelevanceEvaluator(self.qrels_dict, self.selected_trec_measures)
         per_query_eval_results = evaluator.evaluate(results)
 
-        # 
-        curr_query_trec_eval_results_path = Path(self.curr_query_dir) / "trec_eval_results.jsonl"
-
-        # Write per-query trec evaluation results
-        self.write_query_trec_jsonl(curr_query_trec_eval_results_path, per_query_eval_results)
-
         # Store results for calculating means and std_devs
         self.all_query_trec_eval_results[self.curr_qid] = per_query_eval_results[self.curr_qid]
+
+        # Write per-query trec evaluation results if not disabled
+        if not self.config.get('write_per_q_files', False):
+            curr_query_trec_eval_results_path = Path(self.curr_query_dir) / "trec_eval_results.jsonl"
+            self.write_query_trec_jsonl(curr_query_trec_eval_results_path, per_query_eval_results)
 
     def load_pytrec_eval_qrels(self,qrels_path):
         with open(qrels_path, "r") as qrels_file:
