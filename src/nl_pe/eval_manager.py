@@ -60,7 +60,7 @@ class EvalManager:
                     for method_name in self.per_query_methods:
                         if hasattr(self, method_name):
                             method = getattr(self, method_name)
-                            self.logger.debug(f"Running per-query method: {method_name} for query {self.curr_qid}")
+                            #self.logger.debug(f"Running per-query method: {method_name} for query {self.curr_qid}")
                             method()
                         else:
                             self.logger.error(f"Method {method_name} not found in EvalManager class")
