@@ -46,6 +46,21 @@ class AgentLogic():
         for pid, score in zip(pid_list, scores):
             state["pid_to_score_dict"][pid].append(score)
 
+    def pw_postprocess(self, state):
+
+        state['pid_to_agg_score_dict'] = {}
+        for pid, scores in state["pid_to_score_dict"].items():
+            avg_score = sum(scores) / len(scores) if scores else 0
+            state['pid_to_agg_score_dict'][pid] = avg_score
+
+        # Create index dict for tie-breaking using init_knn_pid_list order
+        index_dict = {pid: idx for idx, pid in enumerate(state['init_knn_pid_list'])}
+        
+        scored_pids = state['pid_to_agg_score_dict'].keys()
+        sorted_pids = sorted(scored_pids, key=lambda pid: (-state['pid_to_agg_score_dict'].get(pid, 0), index_dict.get(pid, float('inf'))))
+        state['top_k_psgs'] = sorted_pids
+        state['top_k_rel_scores'] = [state['pid_to_agg_score_dict'].get(pid) for pid in sorted_pids]
+
     #START Batching methods for selecting passages for relevance judgments
     #################################################################
     def batch_all_dense(self, state):

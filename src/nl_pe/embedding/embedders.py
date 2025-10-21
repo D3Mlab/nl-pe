@@ -24,6 +24,7 @@ import heapq, io, torch, shelve
 import time
 from nl_pe.utils.setup_logging import setup_logging
 import gc
+import copy
 
 class BaseEmbedder(ABC):
 
@@ -205,6 +206,7 @@ class BaseEmbedder(ABC):
         self.logger.debug(f"Top-k indices: {top_k_indices.tolist()}")
 
         state['top_k_psgs'] = [doc_ids[i] for i in top_k_indices.tolist()]
+        state['init_knn_pid_list'] = copy.deepcopy(state['top_k_psgs'])
         state['knn_scores'] = top_k_scores.tolist()
         state['knn_time'] = time.time() - start_time
 
@@ -227,6 +229,7 @@ class BaseEmbedder(ABC):
         distances, indices = index.search(query_emb_np, self.k)
         self.logger.debug(f"FAISS search completed, found {len(indices[0])} results")
         state['top_k_psgs'] = [doc_ids[i] for i in indices[0]]
+        state['init_knn_pid_list'] = copy.deepcopy(state['top_k_psgs'])
         state['knn_scores'] = distances[0].tolist()
         state['knn_time'] = time.time() - start_time
 
@@ -283,9 +286,9 @@ class BaseEmbedder(ABC):
         top_k_results = sorted(top_k_heap, key=lambda x: x[0], reverse=True)
         self.logger.debug(f"Final top-{k} doc_ids: {[doc_id for _, doc_id in top_k_results]}")
         state['top_k_psgs'] = [doc_id for _, doc_id in top_k_results]
+        state['init_knn_pid_list'] = copy.deepcopy(state['top_k_psgs'])
         state['knn_scores'] = [score for score, _ in top_k_results]
         state['knn_time'] = time.time() - start_time
-
 
 
 class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
