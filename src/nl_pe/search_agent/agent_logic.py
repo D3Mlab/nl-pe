@@ -10,11 +10,29 @@ class AgentLogic():
         self.logger = setup_logging(self.__class__.__name__, self.config)
 
     def gt_rel_oracle(self, state):
-        
+
         pid_list = state['current_batch']
-        self.data_config.get('qrels_path')
+        qrels_path = self.data_config.get('qrels_path')
         #standard qrels.txt format <qid 0 docid rel>
-        #for each passage_id in state['current_batch'], get the relevance label from qrels as a list of scores in the same order as pid_list
+        #for each passage_id in state['current_batch'], get the relevance label from qrels
+
+        # Load qrels if not already loaded (to avoid reloading for performance, but since small, could load each time)
+        if not hasattr(self, 'qrels_map'):
+            self.qrels_map = {}
+            with open(qrels_path, 'r') as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 4:
+                        qid, _, pid, rel = parts[0], parts[1], parts[2], parts[3]
+                        rel = float(rel)
+                        if qid not in self.qrels_map:
+                            self.qrels_map[qid] = {}
+                        self.qrels_map[qid][pid] = rel
+
+        qid = state['qid']  # Assuming qid is in state
+
+        # Get relevance scores for the pid_list in the same order
+        scores = [self.qrels_map.get(qid, {}).get(pid, 0) for pid in pid_list]
 
         # Ensure pid_to_score_dict exists in state
         if "pid_to_score_dict" not in state:
@@ -22,7 +40,7 @@ class AgentLogic():
 
         for pid in pid_list:
             if pid not in state["pid_to_score_dict"]:
-                state["pid_to_score_dict"][pid] = []    
+                state["pid_to_score_dict"][pid] = []
 
         # Extend the scores for the pids in the batch
         for pid, score in zip(pid_list, scores):
@@ -37,5 +55,3 @@ class AgentLogic():
 
     #END Batching methods for selecting passages for relevance judgments
     #################################################################
-
-        
