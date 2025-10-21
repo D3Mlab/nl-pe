@@ -46,7 +46,7 @@ class AgentLogic():
         for pid, score in zip(pid_list, scores):
             state["pid_to_score_dict"][pid].append(score)
 
-    def pw_postprocess(self, state):
+    def agg_pointwise_scores(self, state):
 
         state['pid_to_agg_score_dict'] = {}
         for pid, scores in state["pid_to_score_dict"].items():
