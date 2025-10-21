@@ -12,10 +12,11 @@ class GeneralAgent(BaseAgent):
         self.policy_class = POLICY_CLASSES.get(self.agent_config.get('policy'))
         self.policy = self.policy_class(self.config)
 
-    def act(self, query: str) -> dict:
+    def act(self, query: str, qid: str) -> dict:
 
         self.curr_state = {
             "query": query,
+            'qid': qid,
             'terminate': False
             }
 

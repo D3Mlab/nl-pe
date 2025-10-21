@@ -67,7 +67,7 @@ class ExperimentManager():
             try:
                 self.logger.info(f"Ranking query {qid}: {query}")
 
-                result = self.agent.act(query)
+                result = self.agent.act(query,qid)
 
                 if result['top_k_psgs']:
                     self.logger.info('Rank successful')

@@ -66,7 +66,8 @@ class AgentLogic():
     def batch_all_dense(self, state):
         if not self.config.get('rel_batching'):
             state['current_batch'] = state['top_k_psgs']
-        self.logger.error("rel batching config not implemented yet")
+        else:
+            self.logger.error("rel batching config not implemented yet")
 
     #END Batching methods for selecting passages for relevance judgments
     #################################################################
