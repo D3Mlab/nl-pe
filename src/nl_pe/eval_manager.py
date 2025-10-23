@@ -94,7 +94,7 @@ class EvalManager:
         self.all_query_trec_eval_results[self.curr_qid] = per_query_eval_results[self.curr_qid]
 
         # Write per-query trec evaluation results if not disabled
-        if not self.config.get('write_per_q_files', False):
+        if self.config.get('write_per_q_files'):
             curr_query_trec_eval_results_path = Path(self.curr_query_dir) / "trec_eval_results.jsonl"
             self.write_query_trec_jsonl(curr_query_trec_eval_results_path, per_query_eval_results)
 
