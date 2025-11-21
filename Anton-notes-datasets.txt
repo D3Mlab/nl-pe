@@ -1,13 +1,14 @@
 BeIR datasets: see table https://huggingface.co/datasets/BeIR/trec-covid 
 
-name, n_qs, n_ds, rel_d_per_q, binary_qrels
-trec-covid, 50, 171K, 493.5, F
+name, n_qs, n_ds, rel_d_per_q, binary_qrels, train-set?
+webis-touche2020, 49, 382K, 19, ?, n
+trec-covid, 50, 171K, 493.5, F, n
+trec-news, 57, 595K, 19.6, ?*no download?, n
+scifact, 300, 5K, 1.1, ?, y
 nfcorpus, 323, 3.6K, 38.2, 0-2
 fiqa, 648, 57K, 2.6, ?
-trec-news, 57, 595K, 19.6, ?*no download?
-webis-touche2020, 49, 382K, 19, ?
 scidocs, 1000, 25K, 4.9, ?
-scifact, 300, 5K, 1.1, ?
+
 
 corpus = {
     "doc1" : {

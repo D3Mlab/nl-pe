@@ -77,7 +77,20 @@ class ExperimentManager():
 
             except Exception as e:
                 self.logger.error(f'Failed to rank or write results for query {qid}: {str(e)}')
-            
+
+    def tune_gp_single_query(self):
+        #rough function to test gp tuning on a single query, remove later
+        self.logger.info("Starting GP tuning experiment on a single query...")
+
+        #config needs to have:
+        #path to pickle from which to get doc_id (list), its in the same order as the faiss index
+
+        #for each doc id, get embedding from index
+
+        #Todo later, embed the query
+
+        #what to store? step, loss, lengthscale, signal variance, noise variance
+
     def write_query_result(self, qid, result):
         """
         Write two files: 
