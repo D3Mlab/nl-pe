@@ -10,18 +10,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 import pandas as pd
 
-#linear regression
-def lr(x,y):
-    x = np.array(x).reshape(-1, 1)
-    y = np.array(y)
 
-    model = LinearRegression()
-    model.fit(x, y)
-
-    lr_slope = model.coef_[0]
-    lr_intercept = model.intercept_
-
-    return lr_slope, lr_intercept
 
 #other misc helper functions
 def get_doc_text_list(ids, corpus_path):
