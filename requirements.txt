@@ -21,3 +21,4 @@ sentence-transformers>=2.7.0
 datasets==3.2.0
 faiss-cpu
 beir==2.2.0
+google-genai

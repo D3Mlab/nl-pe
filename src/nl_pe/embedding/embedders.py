@@ -25,6 +25,8 @@ import time
 from nl_pe.utils.setup_logging import setup_logging
 import gc
 import copy
+from google import genai
+from google.genai import types
 
 class BaseEmbedder(ABC):
 
@@ -48,7 +50,7 @@ class BaseEmbedder(ABC):
         self.tensor_ops_device = normalize_device(self.config.get('tensor_ops_device', self.config.get('device', 'cpu')))
 
     @abstractmethod
-    def embed_documents_batch(self, texts: list[str], prompt = '') -> Tensor:
+    def embed_documents_batch(self, texts: list[str]) -> Tensor:
         """
         Embed a batch of texts into torch tensor, normalized if self.normalize.
         """
@@ -289,6 +291,74 @@ class BaseEmbedder(ABC):
         state['init_knn_pid_list'] = copy.deepcopy(state['top_k_psgs'])
         state['knn_scores'] = [score for score, _ in top_k_results]
         state['knn_time'] = time.time() - start_time
+
+#note google embeddings can use a document and query argument during embedding, to do later
+class GoogleEmbedder(BaseEmbedder):
+    
+    def __init__(self, config):
+        super().__init__(config)
+        self.logger.info(f"Model device: {self.inference_device}")
+        self.logger.info("Matryoshka dimension set to: %s", self.matryoshka_dim if self.matryoshka_dim else "full")
+
+        self.client = genai.Client()
+
+    def embed_documents_batch(self, texts: list[str]) -> Tensor:
+        #add 'task types' later
+        self.logger.debug(f"Encoding {len(texts)} texts in batch")
+
+        result = self.client.models.embed_content(
+            model="gemini-embedding-001",
+            contents=texts,
+        )
+
+        try:
+            embedding_values = [emb.values for emb in result.embeddings]
+        except AttributeError as e:
+            self.logger.error(
+                "Unexpected embedding result structure from Google API: %s", e
+            )
+            raise
+
+        # Convert to a (batch_size, embedding_dim) torch tensor
+        embeddings_tensor = torch.tensor(
+            embedding_values,
+            dtype=torch.float32,
+            device=self.inference_device,
+        )
+
+        self.logger.debug(
+            "Google embeddings created, device: %s, shape: %s",
+            embeddings_tensor.device,
+            tuple(embeddings_tensor.shape),
+        )
+
+        return embeddings_tensor
+
+
+# from google import genai
+# from google.genai import types
+
+# client = genai.Client()
+
+# result = client.models.embed_content(
+#     model="gemini-embedding-001",
+#     contents="What is the meaning of life?",
+#     config=types.EmbedContentConfig(output_dimensionality=768)
+# )
+
+# [embedding_obj] = result.embeddings
+# embedding_length = len(embedding_obj.values)
+
+# print(f"Length of embedding: {embedding_length}")
+
+# import numpy as np
+# from numpy.linalg import norm
+
+# embedding_values_np = np.array(embedding_obj.values)
+# normed_embedding = embedding_values_np / np.linalg.norm(embedding_values_np)
+
+# print(f"Normed embedding length: {len(normed_embedding)}")
+# print(f"Norm of normed embedding: {np.linalg.norm(normed_embedding):.6f}") # Should be very close to 1
 
 
 class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
