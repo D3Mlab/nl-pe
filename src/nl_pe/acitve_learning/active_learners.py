@@ -14,9 +14,11 @@ class BaseActiveLearner(ABC):
 
         self.config = config
         self.logger = setup_logging(self.__class__.__name__, config = self.config, output_file=os.path.join(self.config['exp_dir'], "experiment.log"))
+        self.logger.debug(f"Initializing {self.__class__.__name__} with config: {config}")
         self.n_obs_iterations = self.config.get('active_learning', {}).get('n_obs_iterations')
 
     def get_single_rel_judgment(self, state, doc_id):
+        self.logger.debug(f"Getting relevance judgment for doc_id {doc_id} with qid {state.get('qid', 'unknown')}")
         if not hasattr(self, 'qrels_map'):
             data_config = self.config.get('data', {})
             qrels_path = data_config.get('qrels_path')
@@ -35,13 +37,17 @@ class BaseActiveLearner(ABC):
                         self.qrels_map[qid][pid] = rel
             self.logger.debug(f"Loaded qrels for {len(self.qrels_map)} queries")
         qid = state['qid']
-        return self.qrels_map.get(qid, {}).get(doc_id, 0)
+        judgment = self.qrels_map.get(qid, {}).get(doc_id, 0)
+        self.logger.debug(f"Relevance judgment for doc_id {doc_id} is {judgment}")
+        return judgment
 
     def final_ranked_list_from_posterior(self, state):
+        self.logger.debug("Creating final ranked list from posterior means")
         posterior_means = state["posterior_means"][-1]
         sorted_indices = sorted(range(len(posterior_means)), key=lambda i: posterior_means[i], reverse=True)
         doc_ids = state["doc_ids"]
         state["final_ranked_list"] = [doc_ids[i] for i in sorted_indices]
+        self.logger.debug(f"Final ranked list created with top 5 docs: {state['final_ranked_list'][:5]}")
 
 class GPActiveLearner(BaseActiveLearner):
 
@@ -49,6 +55,7 @@ class GPActiveLearner(BaseActiveLearner):
         super().__init__(config)
 
     def active_learn(self, state):
+        self.logger.debug("Starting active_learn")
         # Load data
         data_config = self.config.get('data', {})
         index_path = data_config.get('index_path')
@@ -61,6 +68,7 @@ class GPActiveLearner(BaseActiveLearner):
         all_embeddings = torch.from_numpy(xb_np).float()
         doc_ids = pickle.load(open(doc_ids_path, 'rb'))
         state["doc_ids"] = doc_ids
+        self.logger.debug(f"Loaded {len(doc_ids)} documents and embeddings with shape {all_embeddings.shape}")
         
         # GP config
         gp_config = self.config.get('gp', {})
@@ -85,9 +93,10 @@ class GPActiveLearner(BaseActiveLearner):
         # First observation: query_embedding and its label
         X_obs = state["query_emb"].unsqueeze(0)
         y_obs = torch.tensor([query_rel_label], dtype=torch.float32)
-        
+        self.logger.debug(f"First observation set with label {query_rel_label}")
         # Iterate
         for iteration in range(self.n_obs_iterations):
+            self.logger.debug(f"Active learning iteration {iteration + 1}/{self.n_obs_iterations}")
             # Create GP model
             #is this efficient? To recreate the gp every time like this?
             class ExactGPModel(gpytorch.models.ExactGP):
@@ -105,33 +114,39 @@ class GPActiveLearner(BaseActiveLearner):
             likelihood = gpytorch.likelihoods.GaussianLikelihood()
             likelihood.noise = observation_noise
             model = ExactGPModel(X_obs, y_obs, likelihood)
-            
+            self.logger.debug("GP model created for this iteration")
+
             # Get acquisition start time
             acq_start = time.time()
             # Get acquisition scores for all docs except observed
             unobserved_indices = [i for i in range(len(doc_ids)) if doc_ids[i] not in state["selected_doc_ids"]]
+            self.logger.debug(f"Computing acquisition scores for {len(unobserved_indices)} unobserved documents")
             acq_scores = self.compute_acquisition_scores(model, all_embeddings, unobserved_indices, acq_func_name)
             acq_time = time.time() - acq_start
+            self.logger.debug(f"Acquisition scores computed in {acq_time:.2f} seconds, max score: {torch.max(acq_scores).item():.4f}")
             
             # Select next doc
             best_idx_in_unobs = torch.argmax(acq_scores).item()
             selected_idx = unobserved_indices[best_idx_in_unobs]
             selected_doc_id = doc_ids[selected_idx]
             acq_score = acq_scores[best_idx_in_unobs].item()
-            
+            self.logger.debug(f"Selected document {selected_doc_id} with acquisition score {acq_score:.4f}")
+
             # Record
             state["selected_doc_ids"].append(selected_doc_id)
             state["acquisition_scores"].append(acq_score)
             state["acquisition_times"].append(acq_time)
-            
+
             # Get label for selected doc
             y_new = self.get_single_rel_judgment(state, selected_doc_id)
-            
+            self.logger.debug(f"Retrieved relevance label {y_new} for document {selected_doc_id}")
+
             # Update observations
             X_new = all_embeddings[selected_idx].unsqueeze(0)
             X_obs = torch.cat([X_obs, X_new], dim=0)
             y_obs = torch.cat([y_obs, torch.tensor([y_new], dtype=torch.float32)], dim=0)
-            
+            self.logger.debug(f"Observations updated to {len(X_obs)} points")
+
             # Record posteriors
             model.eval()
             likelihood.eval()
@@ -139,8 +154,10 @@ class GPActiveLearner(BaseActiveLearner):
                 pred = likelihood(model(all_embeddings))
             state["posterior_means"].append(pred.mean.tolist())
             state["posterior_variances"].append(pred.variance.tolist())
+            self.logger.debug("Posterior predictions recorded for this iteration")
 
     def compute_acquisition_scores(self, model, all_embeddings, unobserved_indices, acq_func_name):
+        self.logger.debug(f"Computing acquisition scores using '{acq_func_name}' for {len(unobserved_indices)} unobserved documents")
         if acq_func_name == 'ts':
             return self.ts(model, all_embeddings, unobserved_indices)
         elif acq_func_name == 'ucb':
@@ -153,6 +170,7 @@ class GPActiveLearner(BaseActiveLearner):
             return self.random(all_embeddings, unobserved_indices)
 
     def ts(self, model, all_embeddings, unobserved_indices):
+        self.logger.debug("Acquiring scores via Thompson Sampling: sampling from posterior")
         unobserved_embs = all_embeddings[unobserved_indices]
         with torch.no_grad():
             pred = model(unobserved_embs)
@@ -169,6 +187,7 @@ class GPActiveLearner(BaseActiveLearner):
     #     return scores
 
     def greedy(self, model, all_embeddings, unobserved_indices):
+        self.logger.debug("Acquiring scores via greedy: using posterior means")
         unobserved_embs = all_embeddings[unobserved_indices]
         with torch.no_grad():
             pred = model(unobserved_embs)
@@ -176,13 +195,16 @@ class GPActiveLearner(BaseActiveLearner):
         return scores
 
     def greedy_epsilon(self, model, all_embeddings, unobserved_indices, epsilon=0.1):
+        self.logger.debug(f"Acquiring scores via greedy-epsilon with epsilon={epsilon}: applying noise to greedy scores")
         scores = self.greedy(model, all_embeddings, unobserved_indices)
         n = scores.numel()
         rand_indices = torch.rand(n) < epsilon
         scores[rand_indices] = torch.randn(scores[rand_indices].size()).to(scores.device)
+        self.logger.debug(f"Applied random noise to {torch.sum(rand_indices).item()} scores")
         return scores
 
     def random(self, all_embeddings, unobserved_indices):
+        self.logger.debug("Acquiring scores randomly (baseline)")
         n = len(unobserved_indices)
         scores = torch.randn(n)
         return scores
