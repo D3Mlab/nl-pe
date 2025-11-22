@@ -4,6 +4,7 @@ from nl_pe.search_agent.agent_logic import AgentLogic
 from nl_pe.llm.prompter import Prompter
 from nl_pe.search_agent.policies import PipelinePolicy
 from nl_pe.embedding.embedders import HuggingFaceEmbedderSentenceTransformers
+from nl_pe.acitve_learning.active_learners import GPActiveLearner
 
 AGENT_CLASSES = {
     'GeneralAgent': GeneralAgent,
@@ -14,6 +15,7 @@ COMPONENT_CLASSES = {
     'AgentLogic': AgentLogic,
     'Prompter': Prompter,
     "HuggingFaceEmbedderSentenceTransformers": HuggingFaceEmbedderSentenceTransformers,
+    "GPActiveLearner": GPActiveLearner,
     }
 
 POLICY_CLASSES = {
