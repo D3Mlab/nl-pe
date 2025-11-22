@@ -46,8 +46,10 @@ class BaseActiveLearner(ABC):
         posterior_means = state["posterior_means"][-1]
         sorted_indices = sorted(range(len(posterior_means)), key=lambda i: posterior_means[i], reverse=True)
         doc_ids = state["doc_ids"]
-        state["final_ranked_list"] = [doc_ids[i] for i in sorted_indices]
-        self.logger.debug(f"Final ranked list created with top 5 docs: {state['final_ranked_list'][:5]}")
+        state["top_k_psgs"] = [doc_ids[i] for i in sorted_indices]
+        if "query_emb" in state:
+            state["query_emb"] = state["query_emb"].tolist()
+        self.logger.debug(f"Final ranked list created with top 5 docs: {state['top_k_psgs'][:5]}")
 
 class GPActiveLearner(BaseActiveLearner):
 
@@ -116,6 +118,9 @@ class GPActiveLearner(BaseActiveLearner):
             model = ExactGPModel(X_obs, y_obs, likelihood)
             self.logger.debug("GP model created for this iteration")
 
+            model.eval()
+            likelihood.eval()
+
             # Get acquisition start time
             acq_start = time.time()
             # Get acquisition scores for all docs except observed
@@ -156,6 +161,8 @@ class GPActiveLearner(BaseActiveLearner):
             state["posterior_variances"].append(pred.variance.tolist())
             self.logger.debug("Posterior predictions recorded for this iteration")
 
+        self.final_ranked_list_from_posterior(state)    
+        
     def compute_acquisition_scores(self, model, all_embeddings, unobserved_indices, acq_func_name):
         self.logger.debug(f"Computing acquisition scores using '{acq_func_name}' for {len(unobserved_indices)} unobserved documents")
         if acq_func_name == 'ts':
@@ -177,7 +184,7 @@ class GPActiveLearner(BaseActiveLearner):
             samples = pred.sample()
         return samples
     def ucb(self, model, all_embeddings, unobserved_indices):
-        pass
+        raise NotImplementedError("UCB acquisition is not implemented yet")
     #def ucb(self, model, all_embeddings, unobserved_indices):
     #     unobserved_embs = all_embeddings[unobserved_indices]
     #     with torch.no_grad():
