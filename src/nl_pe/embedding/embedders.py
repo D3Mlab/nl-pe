@@ -27,6 +27,7 @@ import gc
 import copy
 from google import genai
 from google.genai import types
+from google.api_core.exceptions import GoogleAPIError
 
 class BaseEmbedder(ABC):
 
@@ -302,24 +303,35 @@ class GoogleEmbedder(BaseEmbedder):
 
         self.client = genai.Client()
 
-    def embed_documents_batch(self, texts: list[str]) -> Tensor:
+    def embed_documents_batch(self, texts: list[str], prompt = '') -> Tensor:
         #add 'task types' later
         self.logger.debug(f"Encoding {len(texts)} texts in batch")
 
-        result = self.client.models.embed_content(
-            model="gemini-embedding-001",
-            contents=texts,
-        )
 
         try:
-            embedding_values = [emb.values for emb in result.embeddings]
-        except AttributeError as e:
-            self.logger.error(
-                "Unexpected embedding result structure from Google API: %s", e
+            result = self.client.models.embed_content(
+                model="gemini-embedding-001",
+                contents=texts,
             )
-            raise
+        except Exception as e:
+            self.logger.warning(
+                f"Google embed_content error: {e}. Sleeping 65s then retrying once."
+            )
+            time.sleep(65)
+            # single retry
+            try:
+                result = self.client.models.embed_content(
+                    model="gemini-embedding-001",
+                    contents=texts,
+                )
+            except Exception as e:
+                self.logger.warning(
+                    f"Google embed_content error on retry: {e}. Giving up."
+                )
+                raise
 
-        # Convert to a (batch_size, embedding_dim) torch tensor
+        embedding_values = [emb.values for emb in result.embeddings]
+
         embeddings_tensor = torch.tensor(
             embedding_values,
             dtype=torch.float32,
@@ -333,32 +345,6 @@ class GoogleEmbedder(BaseEmbedder):
         )
 
         return embeddings_tensor
-
-
-# from google import genai
-# from google.genai import types
-
-# client = genai.Client()
-
-# result = client.models.embed_content(
-#     model="gemini-embedding-001",
-#     contents="What is the meaning of life?",
-#     config=types.EmbedContentConfig(output_dimensionality=768)
-# )
-
-# [embedding_obj] = result.embeddings
-# embedding_length = len(embedding_obj.values)
-
-# print(f"Length of embedding: {embedding_length}")
-
-# import numpy as np
-# from numpy.linalg import norm
-
-# embedding_values_np = np.array(embedding_obj.values)
-# normed_embedding = embedding_values_np / np.linalg.norm(embedding_values_np)
-
-# print(f"Normed embedding length: {len(normed_embedding)}")
-# print(f"Norm of normed embedding: {np.linalg.norm(normed_embedding):.6f}") # Should be very close to 1
 
 
 class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
