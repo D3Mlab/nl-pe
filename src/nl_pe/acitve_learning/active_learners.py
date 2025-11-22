@@ -18,7 +18,8 @@ class BaseActiveLearner(ABC):
 
     def get_single_rel_judgment(self, state, doc_id):
         if not hasattr(self, 'qrels_map'):
-            qrels_path = self.config['data'].get('qrels_path')
+            data_config = self.config.get('data', {})
+            qrels_path = data_config.get('qrels_path')
             if not qrels_path:
                 self.logger.error("Qrels path not specified in data config")
                 raise ValueError("Qrels path not specified in data config")
@@ -49,22 +50,30 @@ class GPActiveLearner(BaseActiveLearner):
 
     def active_learn(self, state):
         # Load data
-        index_path = self.config['data']['index_path']
-        doc_ids_path = self.config['data']['doc_ids_path']
-        all_embeddings = torch.load(index_path)
+        data_config = self.config.get('data', {})
+        index_path = data_config.get('index_path')
+        doc_ids_path = data_config.get('doc_ids_path')
+        if not index_path or not doc_ids_path:
+            raise ValueError("Index path and doc_ids_path must be specified in data config")
+        index = faiss.read_index(index_path)
+        #todo: don't load all embeddings if too large
+        xb_np = index.reconstruct_n(0, index.ntotal)
+        all_embeddings = torch.from_numpy(xb_np).float()
         doc_ids = pickle.load(open(doc_ids_path, 'rb'))
         state["doc_ids"] = doc_ids
         
         # GP config
-        gp_config = self.config['gp']
-        kernel = gp_config['kernel']
-        lengthscale = gp_config['lengthscale']
-        signal_noise = gp_config['signal_noise']
-        observation_noise = gp_config['observation_noise']
-        query_rel_label = gp_config['query_rel_label']
-        
+        gp_config = self.config.get('gp', {})
+        #todo: use other kernels if needed
+        kernel = gp_config.get('kernel', 'rbf')  # 'rbf' is standard, can keep or remove
+        lengthscale = gp_config.get('lengthscale')
+        signal_noise = gp_config.get('signal_noise')
+        observation_noise = gp_config.get('observation_noise')
+        query_rel_label = gp_config.get('query_rel_label')
+
         # Active learning config
-        acq_func_name = self.config['active_learning']['acquisition_f']
+        al_config = self.config.get('active_learning', {})
+        acq_func_name = al_config.get('acquisition_f')
         
         # Initialize lists
         state["selected_doc_ids"] = []
@@ -80,6 +89,7 @@ class GPActiveLearner(BaseActiveLearner):
         # Iterate
         for iteration in range(self.n_obs_iterations):
             # Create GP model
+            #is this efficient? To recreate the gp every time like this?
             class ExactGPModel(gpytorch.models.ExactGP):
                 def __init__(self, train_x, train_y, likelihood):
                     super().__init__(train_x, train_y, likelihood)
@@ -149,12 +159,14 @@ class GPActiveLearner(BaseActiveLearner):
             samples = pred.sample()
         return samples
     def ucb(self, model, all_embeddings, unobserved_indices):
-        unobserved_embs = all_embeddings[unobserved_indices]
-        with torch.no_grad():
-            pred = model(unobserved_embs)
-            beta = 2.0  # fixed or 2 * torch.log(torch.tensor(len(unobserved_indices) + 1))
-            scores = pred.mean + beta * pred.stddev
-        return scores
+        pass
+    #def ucb(self, model, all_embeddings, unobserved_indices):
+    #     unobserved_embs = all_embeddings[unobserved_indices]
+    #     with torch.no_grad():
+    #         pred = model(unobserved_embs)
+    #         beta = 2.0  # fixed or 2 * torch.log(torch.tensor(len(unobserved_indices) + 1))
+    #         scores = pred.mean + beta * pred.stddev
+    #     return scores
 
     def greedy(self, model, all_embeddings, unobserved_indices):
         unobserved_embs = all_embeddings[unobserved_indices]
