@@ -346,6 +346,115 @@ class GoogleEmbedder(BaseEmbedder):
         return embeddings_tensor
 
 
+class DimTruncator(BaseEmbedder):
+    def __init__(self, config):
+        super().__init__(config)
+
+    def embed_documents_batch(self, texts: list[str]) -> Tensor:
+        # Not used for DimTruncator, but required by BaseEmbedder
+        raise NotImplementedError("DimTruncator does not embed text")
+
+    def truncate_faiss_exact(self):
+        """
+        Load an existing FAISS index, truncate its vectors to matryoshka_dim,
+        L2-normalize them, and write a new FAISS index + doc_ids pkl.
+
+        Driven by config, e.g.:
+
+        embedding:
+          class: DimTruncator  
+          inference_batch_size: 100
+          index_method: truncate_faiss_exact
+          init_index_path: data/ir/beir/nfcorpus/gemini-3072/faiss/index
+          matryoshka_dim: 48
+        data:
+          index_path: data/ir/beir/nfcorpus/gemini-48/faiss/index
+        """
+        start_time = time.time()
+
+        init_index_path = self.embedding_config.get("init_index_path")
+        target_index_path = self.data_config.get("index_path")
+        d_new = self.matryoshka_dim
+
+        if not init_index_path:
+            raise ValueError("embedding.init_index_path must be set in config for DimTruncator")
+
+        if not target_index_path:
+            raise ValueError("data.index_path must be set in config for DimTruncator")
+
+        if d_new is None:
+            raise ValueError("embedding.matryoshka_dim must be set for DimTruncator")
+
+        self.logger.info(
+            "Starting FAISS truncation: init_index_path=%s, target_index_path=%s, matryoshka_dim=%d",
+            init_index_path, target_index_path, d_new
+        )
+
+        # --- Load original index ---
+        index_orig = faiss.read_index(init_index_path)
+        nb = index_orig.ntotal
+        d_old = index_orig.d
+
+        self.logger.info(
+            "Loaded original FAISS index: ntotal=%d, dim=%d", nb, d_old
+        )
+
+        if d_new > d_old:
+            raise ValueError(
+                f"matryoshka_dim ({d_new}) > original dim ({d_old}); cannot truncate."
+            )
+
+        # --- Reconstruct all vectors from the original index ---
+        self.logger.debug("Reconstructing all %d vectors from original index", nb)
+        xb = np.zeros((nb, d_old), dtype="float32")
+        index_orig.reconstruct_n(0, nb, xb)
+
+        # --- Truncate to matryoshka_dim ---
+        self.logger.debug("Truncating vectors to first %d dimensions", d_new)
+        xb_trunc = xb[:, :d_new].astype("float32", copy=False)
+
+        # --- L2-normalize truncated vectors ---
+        self.logger.debug("Normalizing truncated vectors with L2 norm")
+        faiss.normalize_L2(xb_trunc)  # in-place
+
+        # --- Build new FAISS index ---
+        self.logger.debug("Building new FAISS IndexFlatIP with dim=%d", d_new)
+        index_new = faiss.IndexFlatIP(d_new)
+
+        use_gpu = faiss.get_num_gpus() > 0
+        if use_gpu:
+            self.logger.debug("Using FAISS GPU acceleration for truncated index build")
+            res = faiss.StandardGpuResources()
+            index_new = faiss.index_cpu_to_gpu(res, 0, index_new)
+
+        index_new.add(xb_trunc)
+        self.logger.info("Added %d truncated vectors to new FAISS index", nb)
+
+        # --- Move back to CPU and save ---
+        if use_gpu:
+            index_new = faiss.index_gpu_to_cpu(index_new)
+
+        os.makedirs(os.path.dirname(target_index_path), exist_ok=True)
+        faiss.write_index(index_new, target_index_path)
+        self.logger.info("Saved truncated FAISS index to %s", target_index_path)
+
+        # --- Copy doc_ids pickle ---
+        src_doc_ids_path = init_index_path + "_doc_ids.pkl"
+        dst_doc_ids_path = target_index_path + "_doc_ids.pkl"
+
+        self.logger.debug("Loading doc_ids from %s", src_doc_ids_path)
+        doc_ids = pickle.load(open(src_doc_ids_path, "rb"))
+
+        pickle.dump(doc_ids, open(dst_doc_ids_path, "wb"))
+        self.logger.info("Saved doc_ids to %s", dst_doc_ids_path)
+
+        total_time = time.time() - start_time
+        self.logger.info(
+            "Completed FAISS truncation: ntotal=%d, dim_old=%d, dim_new=%d, time=%.2fs",
+            nb, d_old, d_new, total_time
+        )
+
+
 class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
 
     def __init__(self, config):
