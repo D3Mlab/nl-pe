@@ -201,14 +201,25 @@ class GPActiveLearner(BaseActiveLearner):
             scores = pred.mean
         return scores
 
-    def greedy_epsilon(self, model, all_embeddings, unobserved_indices, epsilon=0.1):
-        self.logger.debug(f"Acquiring scores via greedy-epsilon with epsilon={epsilon}: applying noise to greedy scores")
-        scores = self.greedy(model, all_embeddings, unobserved_indices)
-        n = scores.numel()
-        rand_indices = torch.rand(n) < epsilon
-        scores[rand_indices] = torch.randn(scores[rand_indices].size()).to(scores.device)
-        self.logger.debug(f"Applied random noise to {torch.sum(rand_indices).item()} scores")
-        return scores
+    def greedy_epsilon(self, model, all_embeddings, unobserved_indices):
+        """
+        With probability (1 - epsilon), return greedy scores.
+        With probability epsilon, return random scores (so that the selected
+        action is random when argmax is taken).
+        """
+        epsilon = self.config.get('active_learning', {}).get('epsilon')
+
+        if torch.rand(1).item() > epsilon:
+            # Greedy case
+            self.logger.debug(f"Greedy-epsilon: taking GREEDY action (1-epsilon={1-epsilon})")
+            return self.greedy(model, all_embeddings, unobserved_indices)
+        else:
+            # Random case
+            self.logger.debug(f"Greedy-epsilon: taking RANDOM action (epsilon={epsilon})")
+            n = len(unobserved_indices)
+            # Uniform random scores ensures argmax is random
+            return torch.randn(n, device=all_embeddings.device)
+
 
     def random(self, all_embeddings, unobserved_indices):
         self.logger.debug("Acquiring scores randomly (baseline)")
