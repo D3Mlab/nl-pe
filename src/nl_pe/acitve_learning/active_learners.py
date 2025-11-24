@@ -41,15 +41,6 @@ class BaseActiveLearner(ABC):
         self.logger.debug(f"Relevance judgment for doc_id {doc_id} is {judgment}")
         return judgment
 
-    def final_ranked_list_from_posterior(self, state):
-        self.logger.debug("Creating final ranked list from posterior means")
-        posterior_means = state["posterior_means"][-1]
-        sorted_indices = sorted(range(len(posterior_means)), key=lambda i: posterior_means[i], reverse=True)
-        doc_ids = state["doc_ids"]
-        state["top_k_psgs"] = [doc_ids[i] for i in sorted_indices]
-        if "query_emb" in state:
-            state["query_emb"] = state["query_emb"].tolist()
-        self.logger.debug(f"Final ranked list created with top 5 docs: {state['top_k_psgs'][:5]}")
 
 class GPActiveLearner(BaseActiveLearner):
 
@@ -89,8 +80,6 @@ class GPActiveLearner(BaseActiveLearner):
         state["selected_doc_ids"] = []
         state["acquisition_scores"] = []
         state["acquisition_times"] = []
-        state["posterior_means"] = []
-        state["posterior_variances"] = []
         
         # First observation: query_embedding and its label
         X_obs = state["query_emb"].unsqueeze(0)
@@ -152,16 +141,19 @@ class GPActiveLearner(BaseActiveLearner):
             y_obs = torch.cat([y_obs, torch.tensor([y_new], dtype=torch.float32)], dim=0)
             self.logger.debug(f"Observations updated to {len(X_obs)} points")
 
-            # Record posteriors
-            model.eval()
-            likelihood.eval()
-            with torch.no_grad(), gpytorch.settings.fast_pred_var():
-                pred = likelihood(model(all_embeddings))
-            state["posterior_means"].append(pred.mean.tolist())
-            state["posterior_variances"].append(pred.variance.tolist())
-            self.logger.debug("Posterior predictions recorded for this iteration")
+        # Final ranked list
+        model.eval()
+        likelihood.eval()
+        pred = likelihood(model(all_embeddings))
 
-        self.final_ranked_list_from_posterior(state)    
+        self.logger.debug("Creating final ranked list from posterior means")
+        posterior_means = pred.mean.tolist()
+        sorted_indices = sorted(range(len(posterior_means)), key=lambda i: posterior_means[i], reverse=True)
+        doc_ids = state["doc_ids"]
+        state["top_k_psgs"] = [doc_ids[i] for i in sorted_indices]
+        if "query_emb" in state:
+            state["query_emb"] = state["query_emb"].tolist()
+        self.logger.debug(f"Final ranked list created with top 5 docs: {state['top_k_psgs'][:5]}")
         
     def compute_acquisition_scores(self, model, all_embeddings, unobserved_indices, acq_func_name):
         self.logger.debug(f"Computing acquisition scores using '{acq_func_name}' for {len(unobserved_indices)} unobserved documents")
@@ -175,6 +167,8 @@ class GPActiveLearner(BaseActiveLearner):
             return self.greedy_epsilon(model, all_embeddings, unobserved_indices)
         elif acq_func_name == 'random':
             return self.random(all_embeddings, unobserved_indices)
+        elif acq_func_name == 'greedy_epsilon_ts':
+            return self.greedy_epsilon_ts(model, all_embeddings, unobserved_indices)
 
     def ts(self, model, all_embeddings, unobserved_indices):
         self.logger.debug("Acquiring scores via Thompson Sampling: sampling from posterior")
@@ -183,6 +177,31 @@ class GPActiveLearner(BaseActiveLearner):
             pred = model(unobserved_embs)
             samples = pred.sample()
         return samples
+    
+    def greedy_epsilon_ts(self, model, all_embeddings, unobserved_indices):
+        """
+        With probability (1 - epsilon), return greedy (posterior mean) scores.
+        With probability epsilon, return Thompson Sampling scores.
+
+        This is an epsilon-greedy variant where the exploration strategy
+        is Thompson Sampling rather than uniform random.
+        """
+        epsilon = self.config.get('active_learning', {}).get('epsilon')
+
+        if torch.rand(1).item() > epsilon:
+            # Exploit: greedy by posterior mean
+            self.logger.debug(
+                f"Greedy-epsilon-TS: taking GREEDY action (1-epsilon={1 - epsilon:.3f})"
+            )
+            return self.greedy(model, all_embeddings, unobserved_indices)
+        else:
+            # Explore: Thompson sample from posterior
+            self.logger.debug(
+                f"Greedy-epsilon-TS: taking TS action (epsilon={epsilon:.3f})"
+            )
+            return self.ts(model, all_embeddings, unobserved_indices)
+
+
     def ucb(self, model, all_embeddings, unobserved_indices):
         raise NotImplementedError("UCB acquisition is not implemented yet")
     #def ucb(self, model, all_embeddings, unobserved_indices):
