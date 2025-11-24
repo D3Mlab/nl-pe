@@ -343,6 +343,28 @@ class GoogleEmbedder(BaseEmbedder):
             device=self.inference_device,
         )
 
+        full_dim = embeddings_tensor.shape[-1]
+
+        # --- Matryoshka truncation (dimension control) ---
+        if self.matryoshka_dim:
+            if self.matryoshka_dim > full_dim:
+                # Mirror the safety check you use elsewhere
+                self.logger.warning(
+                    "matryoshka_dim (%d) > Google embedding dim (%d); "
+                    "skipping truncation.",
+                    self.matryoshka_dim,
+                    full_dim,
+                )
+            elif self.matryoshka_dim < full_dim:
+                embeddings_tensor = embeddings_tensor[:, : self.matryoshka_dim]
+                self.logger.debug(
+                    "Truncated Google embeddings to matryoshka_dim=%d, new shape=%s",
+                    self.matryoshka_dim,
+                    tuple(embeddings_tensor.shape),
+                )
+        # if matryoshka_dim is None/0 or equals full_dim, keep as-is
+
+
         self.logger.debug(
             "Google embeddings created, device: %s, shape: %s",
             embeddings_tensor.device,

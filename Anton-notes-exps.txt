@@ -1,0 +1,14 @@
+near term gp experiments (nov 23):
+-----
+- dense with gemini full, 48
+- gp tuned with gemini, 48, full ... does dim red matter
+- try no observation noise
+
+-try refitting
+-check/improve greedy-epsilon, ts
+
+-warm start? 25%,50%,75% ... some warm start seems like a good idea, the start of the ranking should be quite informative ... can use gp full embeddings
+
+- contextual bandits
+
+- future... adaptive gp? once there is no relevant doc in a batch (for x batches) switch modes to gp? will this be hard to explain?
