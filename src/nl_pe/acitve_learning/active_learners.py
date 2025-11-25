@@ -106,7 +106,8 @@ class GPActiveLearner(BaseActiveLearner):
         query_rel_label = gp_config.get('query_rel_label')
         refit_after_obs = gp_config.get('refit_after_obs')
         k_refit = int(gp_config.get('k_refit') or 0)
-        k_obs_refit = int(gp_config.get('k_obs_refit') or 1)        
+        k_obs_refit = int(gp_config.get('k_obs_refit') or 1)
+        k_final = int(gp_config.get('k_final'))        
 
         # Active learning config
         al_config = self.config.get('active_learning', {})
@@ -194,7 +195,7 @@ class GPActiveLearner(BaseActiveLearner):
         posterior_means = pred.mean.tolist()
         sorted_indices = sorted(range(len(posterior_means)), key=lambda i: posterior_means[i], reverse=True)
         doc_ids = state["doc_ids"]
-        state["top_k_psgs"] = [doc_ids[i] for i in sorted_indices]
+        state["top_k_psgs"] = [doc_ids[i] for i in sorted_indices[:k_final]]
         if "query_emb" in state:
             state["query_emb"] = state["query_emb"].tolist()
         self.logger.debug(f"Final ranked list created with top 5 docs: {state['top_k_psgs'][:5]}")
