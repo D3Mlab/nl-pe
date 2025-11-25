@@ -179,7 +179,6 @@ class GPActiveLearner(BaseActiveLearner):
                         )
                         continue
 
-
                     # Get label and embedding
                     y_new = self.get_single_rel_judgment(state, d_id)
                     X_new = all_embeddings[idx].unsqueeze(0)
