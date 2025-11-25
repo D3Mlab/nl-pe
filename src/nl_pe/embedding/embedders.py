@@ -226,6 +226,7 @@ class BaseEmbedder(ABC):
         query = state.get("query")
 
         query_emb = self.embed_documents_batch([query], prompt=self.embedding_config.get("query_prompt", ''))[0]
+        state["query_emb"] = query_emb
         self.logger.debug(f"query_emb device after embedding: {query_emb.device}")
 
         # Load doc_ids from pickle file

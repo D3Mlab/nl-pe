@@ -119,7 +119,10 @@ class GPActiveLearner(BaseActiveLearner):
         signal_noise = self.gp_config.get('signal_noise')
         observation_noise = self.gp_config.get('observation_noise')
         query_rel_label = self.gp_config.get('query_rel_label')
-        k_final = int(self.gp_config.get('k_final'))        
+        k_final = int(self.gp_config.get('k_final'))
+
+        #warm start percent: none or 0 to 100      
+        warm_start_percent = float(self.gp_config.get('warm_start_percent', 0))
 
         # Active learning config
         al_config = self.config.get('active_learning', {})
@@ -139,6 +142,13 @@ class GPActiveLearner(BaseActiveLearner):
         X_obs = state["query_emb"].unsqueeze(0)
         y_obs = torch.tensor([query_rel_label], dtype=torch.float32)
         self.logger.debug(f"First observation set with label {query_rel_label}")
+    
+        # Warm start observations
+        if warm_start_percent > 0:
+            pass
+            #candidate warm start indicies are in state['top_k_psgs'] -- if percent is 100, take all of them, otherwise take percent of them
+            #reduce n_obs_iterations by subtracting number of warm start observations
+
         # Iterate
         for iteration in range(self.n_obs_iterations):
             self.logger.debug(f"Active learning iteration {iteration + 1}/{self.n_obs_iterations}")

@@ -19,5 +19,11 @@ near term gp experiments (nov 23):
 
 - for GP query decomposition, could asign each new query a relevance label (e.g. 2, 1.5) to seed the new area
 
+Larger observation counts (e.g. 1000s)
 - for 1000 observations, why so long (e.g. 10 mins per query... ) acquistion times don't seem to be going up too much for TS (dominated by the sampling?),
  but greedy increasse from 0.02s to 1s per iteration at begining vs end (of 1000 obs) -- may need to switch to inducing points?
+
+ Speedup considerations (see chatgpt convo for brainstorming "Slow greedy sampling fix"):
+- Fantasy models (gpytorch for bayesian updates)
+- fast_prediction approximations in gpytorch
+- sparse gps 
