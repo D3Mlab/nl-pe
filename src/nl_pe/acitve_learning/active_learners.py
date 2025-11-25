@@ -47,7 +47,7 @@ class GPActiveLearner(BaseActiveLearner):
     def __init__(self, config):
         super().__init__(config)
 
-    def _maybe_refit_gp(self, model, likelihood, train_x, train_y, refit_after_obs, k_refit, k_obs_refit):
+    def _maybe_refit_gp(self, state, model, likelihood, train_x, train_y, refit_after_obs, k_refit, k_obs_refit):
         # Only refit if requested and k_refit > 0
         if str(refit_after_obs).lower() not in (1, True, "y", "yes", "true"):
             return
@@ -74,6 +74,9 @@ class GPActiveLearner(BaseActiveLearner):
             optimizer.zero_grad()
             output = model(train_x)
             loss = -mll(output, train_y)
+            neg_mll = loss.item()
+            self.logger.debug(f"Refit step {step + 1}/{k_refit}, -mll={neg_mll:.6f}")
+            state["neg_mll"].append(neg_mll)
             loss.backward()
             optimizer.step()
 
@@ -118,6 +121,7 @@ class GPActiveLearner(BaseActiveLearner):
         state["acquisition_scores"] = []
         state["acquisition_times"] = []
         state["model_update_times"] = []
+        state["neg_mll"] = []
         
         # First observation: query_embedding and its label
         X_obs = state["query_emb"].unsqueeze(0)
@@ -147,7 +151,7 @@ class GPActiveLearner(BaseActiveLearner):
             self.logger.debug("GP model created for this iteration")
 
             # Optionally refit GP hyperparameters on all observed data
-            self._maybe_refit_gp(model, likelihood, X_obs, y_obs, refit_after_obs, k_refit, k_obs_refit)
+            self._maybe_refit_gp(state, model, likelihood, X_obs, y_obs, refit_after_obs, k_refit, k_obs_refit)
             model_build_time = time.time() - model_build_start
             state["model_update_times"].append(model_build_time)
             self.logger.debug(f"Model update (build + optional refit) took {model_build_time:.2f} seconds")

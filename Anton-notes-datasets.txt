@@ -5,7 +5,7 @@ webis-touche2020, 49, 382K, 19, ?, n
 trec-covid, 50, 171K, 493.5, F, n
 trec-news, 57, 595K, 19.6, ?*no download?, n
 scifact, 300, 5K, 1.1, ?, y
-nfcorpus, 323, 3.6K, 38.2, 0-2
+nfcorpus, 323, 3.6K, 38.2, 0-2, y
 fiqa, 648, 57K, 2.6, ?
 scidocs, 1000, 25K, 4.9, ?
 
