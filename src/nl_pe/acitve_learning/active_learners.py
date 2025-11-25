@@ -47,7 +47,7 @@ class GPActiveLearner(BaseActiveLearner):
     def __init__(self, config):
         super().__init__(config)
 
-    def _maybe_refit_gp(self, model, likelihood, train_x, train_y, refit_after_obs, k_refit):
+    def _maybe_refit_gp(self, model, likelihood, train_x, train_y, refit_after_obs, k_refit, k_obs_refit):
         # Only refit if requested and k_refit > 0
         if str(refit_after_obs).lower() not in (1, True, "y", "yes", "true"):
             return
@@ -57,6 +57,11 @@ class GPActiveLearner(BaseActiveLearner):
         self.logger.debug(f"Refitting GP hyperparameters for {k_refit} steps")
         model.train()
         likelihood.train()
+
+        # Only refit every k_obs_refit observations
+        obs_count = train_x.size(0)
+        if k_obs_refit is not None and k_obs_refit > 1 and (obs_count % k_obs_refit != 0):
+            return
 
         lr = self.config.get('gp', {}).get('lr', 0.1)
         optimizer = torch.optim.Adam(
@@ -101,6 +106,7 @@ class GPActiveLearner(BaseActiveLearner):
         query_rel_label = gp_config.get('query_rel_label')
         refit_after_obs = gp_config.get('refit_after_obs')
         k_refit = int(gp_config.get('k_refit') or 0)
+        k_obs_refit = int(gp_config.get('k_obs_refit') or 1)        
 
         # Active learning config
         al_config = self.config.get('active_learning', {})
@@ -110,6 +116,7 @@ class GPActiveLearner(BaseActiveLearner):
         state["selected_doc_ids"] = []
         state["acquisition_scores"] = []
         state["acquisition_times"] = []
+        state["model_update_times"] = []
         
         # First observation: query_embedding and its label
         X_obs = state["query_emb"].unsqueeze(0)
@@ -118,6 +125,7 @@ class GPActiveLearner(BaseActiveLearner):
         # Iterate
         for iteration in range(self.n_obs_iterations):
             self.logger.debug(f"Active learning iteration {iteration + 1}/{self.n_obs_iterations}")
+            model_build_start = time.time()
             # Create GP model
             #is this efficient? To recreate the gp every time like this?
             class ExactGPModel(gpytorch.models.ExactGP):
@@ -138,7 +146,10 @@ class GPActiveLearner(BaseActiveLearner):
             self.logger.debug("GP model created for this iteration")
 
             # Optionally refit GP hyperparameters on all observed data
-            self._maybe_refit_gp(model, likelihood, X_obs, y_obs, refit_after_obs, k_refit)
+            self._maybe_refit_gp(model, likelihood, X_obs, y_obs, refit_after_obs, k_refit, k_obs_refit)
+            model_build_time = time.time() - model_build_start
+            state["model_update_times"].append(model_build_time)
+            self.logger.debug(f"Model update (build + optional refit) took {model_build_time:.2f} seconds")
 
             model.eval()
             likelihood.eval()
