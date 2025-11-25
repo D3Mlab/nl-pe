@@ -5,7 +5,8 @@ near term gp experiments (nov 23):
 - try no observation noise
 
 -try refitting
--check/improve greedy-epsilon, ts
+- try gradient enchanced
+-ucb
 
 -warm start? 25%,50%,75% ... some warm start seems like a good idea, the start of the ranking should be quite informative ... can use gp full embeddings
 

@@ -47,6 +47,34 @@ class GPActiveLearner(BaseActiveLearner):
     def __init__(self, config):
         super().__init__(config)
 
+    def _maybe_refit_gp(self, model, likelihood, train_x, train_y, refit_after_obs, k_refit):
+        # Only refit if requested and k_refit > 0
+        if str(refit_after_obs).lower() not in (1, True, "y", "yes", "true"):
+            return
+        if k_refit is None or k_refit <= 0:
+            return
+
+        self.logger.debug(f"Refitting GP hyperparameters for {k_refit} steps")
+        model.train()
+        likelihood.train()
+
+        lr = self.config.get('gp', {}).get('lr', 0.1)
+        optimizer = torch.optim.Adam(
+            list(model.parameters()) + list(likelihood.parameters()),
+            lr=lr,
+        )
+        mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+
+        for step in range(k_refit):
+            optimizer.zero_grad()
+            output = model(train_x)
+            loss = -mll(output, train_y)
+            loss.backward()
+            optimizer.step()
+
+        model.eval()
+        likelihood.eval()
+
     def active_learn(self, state):
         self.logger.debug("Starting active_learn")
         # Load data
@@ -71,6 +99,8 @@ class GPActiveLearner(BaseActiveLearner):
         signal_noise = gp_config.get('signal_noise')
         observation_noise = gp_config.get('observation_noise')
         query_rel_label = gp_config.get('query_rel_label')
+        refit_after_obs = gp_config.get('refit_after_obs')
+        k_refit = int(gp_config.get('k_refit') or 0)
 
         # Active learning config
         al_config = self.config.get('active_learning', {})
@@ -106,6 +136,9 @@ class GPActiveLearner(BaseActiveLearner):
             likelihood.noise = observation_noise
             model = ExactGPModel(X_obs, y_obs, likelihood)
             self.logger.debug("GP model created for this iteration")
+
+            # Optionally refit GP hyperparameters on all observed data
+            self._maybe_refit_gp(model, likelihood, X_obs, y_obs, refit_after_obs, k_refit)
 
             model.eval()
             likelihood.eval()
