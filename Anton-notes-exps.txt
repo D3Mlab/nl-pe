@@ -4,6 +4,9 @@ near term gp experiments (nov 23):
 - gp tuned with gemini, 48, full ... does dim red matter
 - try no observation noise
 
+- look deeper... 300?, 1000?
+- test gemini at higher embedding counts (if that's our embedder, easy to test effect of dimensionality)
+
 -try refitting
 - try gradient enchanced
 -ucb
@@ -13,3 +16,8 @@ near term gp experiments (nov 23):
 - contextual bandits
 
 - future... adaptive gp? once there is no relevant doc in a batch (for x batches) switch modes to gp? will this be hard to explain?
+
+- for GP query decomposition, could asign each new query a relevance label (e.g. 2, 1.5) to seed the new area
+
+- for 1000 observations, why so long (e.g. 10 mins per query... ) acquistion times don't seem to be going up too much for TS (dominated by the sampling?),
+ but greedy increasse from 0.02s to 1s per iteration at begining vs end (of 1000 obs) -- may need to switch to inducing points?

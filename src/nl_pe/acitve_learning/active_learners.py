@@ -47,9 +47,15 @@ class GPActiveLearner(BaseActiveLearner):
     def __init__(self, config):
         super().__init__(config)
 
-    def _maybe_refit_gp(self, state, model, likelihood, train_x, train_y, refit_after_obs, k_refit, k_obs_refit):
+    def _maybe_refit_gp(self, state, model, likelihood, train_x, train_y):
+
+        refit_after_obs = self.gp_config.get('refit_after_obs')
+        k_refit = int(self.gp_config.get('k_refit') or 0)
+        lr = self.gp_config.get('lr')
+        k_obs_refit = int(self.gp_config.get('k_obs_refit') or 1)
+
         # Only refit if requested and k_refit > 0
-        if str(refit_after_obs).lower() not in (1, True, "y", "yes", "true"):
+        if str(refit_after_obs).lower() not in ("1", "true", "y", "yes", "true"):
             return
         if k_refit is None or k_refit <= 0:
             return
@@ -63,7 +69,6 @@ class GPActiveLearner(BaseActiveLearner):
         if k_obs_refit is not None and k_obs_refit > 1 and (obs_count % k_obs_refit != 0):
             return
 
-        lr = self.config.get('gp', {}).get('lr', 0.1)
         optimizer = torch.optim.Adam(
             list(model.parameters()) + list(likelihood.parameters()),
             lr=lr,
@@ -75,8 +80,15 @@ class GPActiveLearner(BaseActiveLearner):
             output = model(train_x)
             loss = -mll(output, train_y)
             neg_mll = loss.item()
+
             self.logger.debug(f"Refit step {step + 1}/{k_refit}, -mll={neg_mll:.6f}")
+            ls = float(model.covar_module.base_kernel.lengthscale.item())
+            sn = float(model.covar_module.outputscale.item())
+            on = float(likelihood.noise.item())
             state["neg_mll"].append(neg_mll)
+            state["lengthscale"].append(ls)
+            state["signal_noise"].append(sn)
+            state["obs_noise"].append(on)
             loss.backward()
             optimizer.step()
 
@@ -100,17 +112,14 @@ class GPActiveLearner(BaseActiveLearner):
         self.logger.debug(f"Loaded {len(doc_ids)} documents and embeddings with shape {all_embeddings.shape}")
         
         # GP config
-        gp_config = self.config.get('gp', {})
+        self.gp_config = self.config.get('gp', {})
         #todo: use other kernels if needed
-        kernel = gp_config.get('kernel', 'rbf')  # 'rbf' is standard, can keep or remove
-        lengthscale = gp_config.get('lengthscale')
-        signal_noise = gp_config.get('signal_noise')
-        observation_noise = gp_config.get('observation_noise')
-        query_rel_label = gp_config.get('query_rel_label')
-        refit_after_obs = gp_config.get('refit_after_obs')
-        k_refit = int(gp_config.get('k_refit') or 0)
-        k_obs_refit = int(gp_config.get('k_obs_refit') or 1)
-        k_final = int(gp_config.get('k_final'))        
+        kernel = self.gp_config.get('kernel', 'rbf')  # 'rbf' is standard, can keep or remove
+        lengthscale = self.gp_config.get('lengthscale')
+        signal_noise = self.gp_config.get('signal_noise')
+        observation_noise = self.gp_config.get('observation_noise')
+        query_rel_label = self.gp_config.get('query_rel_label')
+        k_final = int(self.gp_config.get('k_final'))        
 
         # Active learning config
         al_config = self.config.get('active_learning', {})
@@ -122,6 +131,9 @@ class GPActiveLearner(BaseActiveLearner):
         state["acquisition_times"] = []
         state["model_update_times"] = []
         state["neg_mll"] = []
+        state["lengthscale"] = []
+        state["signal_noise"] = []
+        state["obs_noise"] = []
         
         # First observation: query_embedding and its label
         X_obs = state["query_emb"].unsqueeze(0)
@@ -151,7 +163,7 @@ class GPActiveLearner(BaseActiveLearner):
             self.logger.debug("GP model created for this iteration")
 
             # Optionally refit GP hyperparameters on all observed data
-            self._maybe_refit_gp(state, model, likelihood, X_obs, y_obs, refit_after_obs, k_refit, k_obs_refit)
+            self._maybe_refit_gp(state, model, likelihood, X_obs, y_obs)
             model_build_time = time.time() - model_build_start
             state["model_update_times"].append(model_build_time)
             self.logger.debug(f"Model update (build + optional refit) took {model_build_time:.2f} seconds")
