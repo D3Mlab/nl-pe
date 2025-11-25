@@ -94,7 +94,6 @@ class GPActiveLearner(BaseActiveLearner):
 
         model.eval()
         likelihood.eval()
-
     def active_learn(self, state):
         self.logger.debug("Starting active_learn")
         # Load data
@@ -143,15 +142,71 @@ class GPActiveLearner(BaseActiveLearner):
         y_obs = torch.tensor([query_rel_label], dtype=torch.float32)
         self.logger.debug(f"First observation set with label {query_rel_label}")
     
+        # Number of active learning iterations (may be reduced by warm start)
+        n_iterations = self.n_obs_iterations
+
         # Warm start observations
         if warm_start_percent > 0:
-            pass
-            #candidate warm start indicies are in state['top_k_psgs'] -- if percent is 100, take all of them, otherwise take percent of them
-            #reduce n_obs_iterations by subtracting number of warm start observations
+            top_k_psgs = state.get('top_k_psgs', [])
+            if not top_k_psgs:
+                raise ValueError("Warm start requested but 'top_k_psgs' not found in state")
+            else:
+                n_candidates = len(top_k_psgs)
+                if warm_start_percent >= 100.0:
+                    n_warm = n_candidates
+                else:
+                    n_warm = int(np.floor(n_candidates * (warm_start_percent / 100.0)))
+                    if n_warm <= 0:
+                        n_warm = 1  # at least one warm-start doc if percent > 0
+
+                n_warm = min(n_warm, n_candidates)
+                warm_start_doc_ids = top_k_psgs[:n_warm]
+
+                self.logger.info(
+                    f"Warm start enabled: percent={warm_start_percent}, "
+                    f"n_candidates={n_candidates}, n_warm={n_warm}"
+                )
+
+                # Map doc_id -> index in doc_ids
+                docid_to_idx = {d_id: i for i, d_id in enumerate(doc_ids)}
+
+                warm_added = 0
+                for d_id in warm_start_doc_ids:
+                    idx = docid_to_idx.get(d_id, None)
+                    if idx is None:
+                        self.logger.warning(
+                            f"Warm start doc_id {d_id} not found in loaded doc_ids; skipping."
+                        )
+                        continue
+
+
+                    # Get label and embedding
+                    y_new = self.get_single_rel_judgment(state, d_id)
+                    X_new = all_embeddings[idx].unsqueeze(0)
+
+                    # Update observations and selected docs
+                    X_obs = torch.cat([X_obs, X_new], dim=0)
+                    y_obs = torch.cat([y_obs, torch.tensor([y_new], dtype=torch.float32)], dim=0)
+                    state["selected_doc_ids"].append(d_id)
+                    warm_added += 1
+
+                # Reduce the number of AL iterations by the number of warm-start observations
+                if warm_added > 0:
+                    n_iterations = max(0, self.n_obs_iterations - warm_added)
+                    self.logger.debug(
+                        f"Warm start added {warm_added} observations; "
+                        f"active learning iterations reduced from "
+                        f"{self.n_obs_iterations} to {n_iterations}"
+                    )
+                else:
+                    self.logger.debug(
+                        "No warm start observations were actually added; "
+                        "keeping original number of active learning iterations."
+                    )
 
         # Iterate
-        for iteration in range(self.n_obs_iterations):
-            self.logger.debug(f"Active learning iteration {iteration + 1}/{self.n_obs_iterations}")
+        for iteration in range(n_iterations):
+            self.logger.debug(f"Active learning iteration {iteration + 1}/{n_iterations}")
             model_build_start = time.time()
             # Create GP model
             #is this efficient? To recreate the gp every time like this?
@@ -225,6 +280,7 @@ class GPActiveLearner(BaseActiveLearner):
         if "query_emb" in state:
             state["query_emb"] = state["query_emb"].tolist()
         self.logger.debug(f"Final ranked list created with top 5 docs: {state['top_k_psgs'][:5]}")
+
         
     def compute_acquisition_scores(self, model, all_embeddings, unobserved_indices, acq_func_name):
         self.logger.debug(f"Computing acquisition scores using '{acq_func_name}' for {len(unobserved_indices)} unobserved documents")
