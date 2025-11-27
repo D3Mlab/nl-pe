@@ -203,27 +203,31 @@ class GPActiveLearner(BaseActiveLearner):
                         "keeping original number of active learning iterations."
                     )
 
+                self.logger.info(f"Building initial GP model after warm start with {len(X_obs)} observations")
+                model_build_start = time.time()
+                # Create GP model
+                likelihood = gpytorch.likelihoods.GaussianLikelihood()
+                likelihood.noise = observation_noise
+                model = ExactGPModel(X_obs, y_obs, likelihood, lengthscale, signal_noise)
+                self.logger.debug("GP model created")
+
+                # Optionally refit GP hyperparameters on all observed data
+                self._maybe_refit_gp(state, model, likelihood, X_obs, y_obs)
+                model_build_time = time.time() - model_build_start
+                state["model_update_times"].append(model_build_time)
+                self.logger.debug(f"Model update (build + optional refit) took {model_build_time:.2f} seconds")
+
+                model.eval()
+                likelihood.eval()
+
         # Iterate
         for iteration in range(n_iterations):
             self.logger.debug(f"Active learning iteration {iteration + 1}/{n_iterations}")
             model_build_start = time.time()
             # Create GP model
-            #is this efficient? To recreate the gp every time like this?
-            class ExactGPModel(gpytorch.models.ExactGP):
-                def __init__(self, train_x, train_y, likelihood):
-                    super().__init__(train_x, train_y, likelihood)
-                    self.mean_module = gpytorch.means.ConstantMean()
-                    self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
-                    self.covar_module.base_kernel.lengthscale = lengthscale
-                    self.covar_module.outputscale = signal_noise
-                def forward(self, x):
-                    mean_x = self.mean_module(x)
-                    covar_x = self.covar_module(x)
-                    return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
-            
             likelihood = gpytorch.likelihoods.GaussianLikelihood()
             likelihood.noise = observation_noise
-            model = ExactGPModel(X_obs, y_obs, likelihood)
+            model = ExactGPModel(X_obs, y_obs, likelihood, lengthscale, signal_noise)
             self.logger.debug("GP model created for this iteration")
 
             # Optionally refit GP hyperparameters on all observed data
@@ -371,3 +375,16 @@ class GPActiveLearner(BaseActiveLearner):
         n = len(unobserved_indices)
         scores = torch.randn(n)
         return scores
+
+
+class ExactGPModel(gpytorch.models.ExactGP):
+    def __init__(self, train_x, train_y, likelihood, lengthscale, signal_noise):
+        super().__init__(train_x, train_y, likelihood)
+        self.mean_module = gpytorch.means.ConstantMean()
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+        self.covar_module.base_kernel.lengthscale = lengthscale
+        self.covar_module.outputscale = signal_noise
+    def forward(self, x):
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)

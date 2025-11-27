@@ -27,3 +27,6 @@ Larger observation counts (e.g. 1000s)
 - Fantasy models (gpytorch for bayesian updates)
 - fast_prediction approximations in gpytorch
 - sparse gps 
+
+Use a cross-encoder instead of a generative LLM so I can fairly easily make 1000's/10000's observations, show that the GP helps here? Maybe a KNN graph here? Maybe a small LLM?
+Hi-Lo fidelity?
