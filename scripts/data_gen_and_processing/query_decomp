@@ -1,0 +1,79 @@
+import os
+import pandas as pd
+import sys
+import json
+import csv
+
+from pathlib import Path
+import yaml
+from dotenv import load_dotenv
+from nl_pe.llm.prompter import Prompter
+from nl_pe.utils.text_processing import list_to_text_block
+
+
+#params to set
+#how many new queries to generate per test query
+k_new_qs = 4
+#how many test queries to process, process all if None
+n_test_qs = 2
+#LLM -- use thise to overwrite the values in config['llm']
+model_name = "gpt-5"
+model_class = "OpenAILLM"
+temperature = 1
+
+#prompt:
+template_path = 'q_decomp.jinja2'
+
+CONFIG_PATH = "configs/llm/config.yaml"
+
+with open(CONFIG_PATH, "r") as f:
+    config = yaml.safe_load(f)
+
+load_dotenv()
+
+prompter = Prompter(config)
+
+#
+path_to_test_qs = 'data/ir/beir/nfcorpus/test_queries.csv'
+#format is:
+#'q_id','q_text'
+#qid1,qtext1
+#...
+
+#only process first n_test_queries if n_test_queries is not None, otherwise process all
+#read in the queries to process as a list of strings, q_texts
+
+#start a new .csv in the same dir as path_to_test_qs with the following naming:
+#query_decomp_{model_name}_{k_new_qs}.csv
+
+#this new .csv will have the following columns:
+#'q_id', 'q_0', 'q_1', ..., 'q_{k_new_qs}'
+#where q_0 is the original query, and q_1 ... q_k_new_qs are the new decomposed queries
+
+
+#for each query in q_texts, prompt LLM to generate k_new_qs new queries
+for q in q_texts:
+
+    #start by creating the prompt_dict for each query:
+    prompt_dict = {
+        'q': q,
+        'k': k_new_qs
+    }
+
+    response = prompter.prompt_from_temp(template_path, prompt_dict)
+
+    print("Full response:", response)
+
+    #note that the prompter adds "JSON_dict" to the response if it can parse it
+    if 'JSON_dict' in response:
+        json_data = response['JSON_dict']
+
+        #extract q_1, ..., q_k_new_qs from json_data, which has the format:
+    
+        #<JSON format template>
+#{new_query_list: [<new_query_1>,...,<new_query_{{K}}>]
+#</JSON format template>
+
+
+    else:
+        #q1, ..., q_k_new_qs should be recorded as PARSING_ERROR
