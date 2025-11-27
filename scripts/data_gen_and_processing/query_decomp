@@ -11,17 +11,17 @@ from nl_pe.llm.prompter import Prompter
 from nl_pe.utils.text_processing import list_to_text_block
 
 
-#params to set
-#how many new queries to generate per test query
+# params to set
+# how many new queries to generate per test query
 k_new_qs = 4
-#how many test queries to process, process all if None
+# how many test queries to process, process all if None
 n_test_qs = 2
-#LLM -- use thise to overwrite the values in config['llm']
+# LLM -- use these to overwrite the values in config['llm']
 model_name = "gpt-5"
 model_class = "OpenAILLM"
 temperature = 1
 
-#prompt:
+# prompt:
 template_path = 'q_decomp.jinja2'
 
 CONFIG_PATH = "configs/llm/config.yaml"
@@ -29,51 +29,94 @@ CONFIG_PATH = "configs/llm/config.yaml"
 with open(CONFIG_PATH, "r") as f:
     config = yaml.safe_load(f)
 
+config["llm"].update(
+    {
+        "model_name": model_name,
+        "model_class": model_class,
+        "temperature": temperature,
+    }
+)
+
 load_dotenv()
 
 prompter = Prompter(config)
 
 #
 path_to_test_qs = 'data/ir/beir/nfcorpus/test_queries.csv'
-#format is:
-#'q_id','q_text'
-#qid1,qtext1
-#...
+# format is:
+# 'q_id','q_text'
+# qid1,qtext1
+# ...
 
-#only process first n_test_queries if n_test_queries is not None, otherwise process all
-#read in the queries to process as a list of strings, q_texts
+# read in the queries to process as a list of strings, q_texts
+df = pd.read_csv(path_to_test_qs)
 
-#start a new .csv in the same dir as path_to_test_qs with the following naming:
-#query_decomp_{model_name}_{k_new_qs}.csv
+if n_test_qs is not None:
+    df = df.head(n_test_qs)
 
-#this new .csv will have the following columns:
-#'q_id', 'q_0', 'q_1', ..., 'q_{k_new_qs}'
-#where q_0 is the original query, and q_1 ... q_k_new_qs are the new decomposed queries
+q_ids = df["q_id"].tolist()
+q_texts = df["q_text"].tolist()
 
+# start a new .csv in the same dir as path_to_test_qs with the following naming:
+# query_decomp_{model_name}_{k_new_qs}.csv
+input_path = Path(path_to_test_qs)
+output_path = input_path.parent / f"query_decomp_{model_name}_{k_new_qs}.csv"
 
-#for each query in q_texts, prompt LLM to generate k_new_qs new queries
-for q in q_texts:
+# this new .csv will have the following columns:
+# 'q_id', 'q_0', 'q_1', ..., 'q_{k_new_qs}'
+# where q_0 is the original query, and q_1 ... q_k_new_qs are the new decomposed queries
+fieldnames = ["q_id"] + [f"q_{i}" for i in range(0, k_new_qs + 1)]
 
-    #start by creating the prompt_dict for each query:
-    prompt_dict = {
-        'q': q,
-        'k': k_new_qs
-    }
+with open(output_path, "w", newline="", encoding="utf-8") as csvfile:
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    writer.writeheader()
 
-    response = prompter.prompt_from_temp(template_path, prompt_dict)
+    # for each query in q_texts, prompt LLM to generate k_new_qs new queries
+    for q_id, q in zip(q_ids, q_texts):
 
-    print("Full response:", response)
+        # start by creating the prompt_dict for each query:
+        prompt_dict = {
+            "q": q,
+            "k_new": k_new_qs,
+            "k_tot": k_new_qs + 1
+        }
 
-    #note that the prompter adds "JSON_dict" to the response if it can parse it
-    if 'JSON_dict' in response:
-        json_data = response['JSON_dict']
+        response = prompter.prompt_from_temp(template_path, prompt_dict)
 
-        #extract q_1, ..., q_k_new_qs from json_data, which has the format:
-    
-        #<JSON format template>
-#{new_query_list: [<new_query_1>,...,<new_query_{{K}}>]
-#</JSON format template>
+        print(f"Full response for q_id={q_id}:", response)
 
+        # initialize row with q_id and original query (q_0)
+        row = {
+            "q_id": q_id,
+            "q_0": q,
+        }
 
-    else:
-        #q1, ..., q_k_new_qs should be recorded as PARSING_ERROR
+        new_queries = None
+
+        # note that the prompter adds "JSON_dict" to the response if it can parse it
+        if isinstance(response, dict) and "JSON_dict" in response:
+            json_data = response["JSON_dict"]
+
+            # extract q_1, ..., q_k_new_qs from json_data, which has the format:
+            #
+            # <JSON format template>
+            # {new_query_list: [<new_query_1>,...,<new_query_{{K}}>]
+            # </JSON format template>
+            if isinstance(json_data, dict):
+                new_queries = json_data.get("new_query_list")
+
+        # if anything went wrong or the structure isn't as expected, handle below
+        if not isinstance(new_queries, list):
+            new_queries = []
+
+        # fill q_1 ... q_k_new_qs
+        for i in range(1, k_new_qs + 1):
+            if i <= len(new_queries):
+                row[f"q_{i}"] = new_queries[i - 1]
+            else:
+                # q1, ..., q_k_new_qs should be recorded as PARSING_ERROR
+                row[f"q_{i}"] = "PARSING_ERROR"
+
+        writer.writerow(row)
+
+print(f"Finished writing decomposed queries to: {output_path}")

@@ -1,11 +1,16 @@
-Given an initial query, generate a set of {{K}} new queries so that, together, this new query set could help find new relevant documents in a search.
+Given an initial query, generate a set of {{k_new}} new queries so that together, this set of {{k_tot}} queries (new plus old) could help find relevant documents in {{k_tot}} searches.
 
 <initial query>
 {{q}}
-</initial auery>
+</initial query>
 
-Respond using a python list of strings containing the {{K}} new queries according to the following JSON format example:
+Respond ONLY with a single valid JSON object of the following form:
 
-<JSON format template>
-{new_query_list: [<new_query_1>,...,<new_query_{{K}}>]
-</JSON format template>
+{
+  "new_query_list": [
+    "<new_query_1>",
+    "<new_query_2>",
+    ...
+    "<new_query_{{k_new}}>"
+  ]
+}
