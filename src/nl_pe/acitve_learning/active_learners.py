@@ -120,6 +120,9 @@ class GPActiveLearner(BaseActiveLearner):
         query_rel_label = self.gp_config.get('query_rel_label')
         k_final = int(self.gp_config.get('k_final'))
 
+        use_query_reforms = str(self.gp_config.get('use_query_reformulations', False)).lower() in ("1", "true", "yes", "y")
+        reform_query_rel_label = self.gp_config.get('reform_query_rel_label')
+
         #warm start percent: none or 0 to 100      
         warm_start_percent = float(self.gp_config.get('warm_start_percent', 0))
 
@@ -141,6 +144,29 @@ class GPActiveLearner(BaseActiveLearner):
         X_obs = state["query_emb"].unsqueeze(0)
         y_obs = torch.tensor([query_rel_label], dtype=torch.float32)
         self.logger.debug(f"First observation set with label {query_rel_label}")
+
+            # Optionally add query reformulation embeddings as additional observations
+        if use_query_reforms:
+            reform_embs = state.get("query_reformation_embeddings", [])
+            if reform_embs and reform_query_rel_label is not None:
+                # reform_embs is expected to be a list of tensors
+                reform_X = torch.stack(reform_embs, dim=0)
+                reform_y = torch.full(
+                    (len(reform_embs),),
+                    float(reform_query_rel_label),
+                    dtype=torch.float32,
+                )
+                X_obs = torch.cat([X_obs, reform_X], dim=0)
+                y_obs = torch.cat([y_obs, reform_y], dim=0)
+                self.logger.debug(
+                    f"Added {len(reform_embs)} query reformulation embeddings "
+                    f"with label {reform_query_rel_label} to initial observations"
+                )
+            else:
+                self.logger.debug(
+                    "use_query_reformulations=True but no reformulation embeddings "
+                    "or reform_query_rel_label is None; skipping reformulations."
+                )
     
         # Number of active learning iterations (may be reduced by warm start)
         n_iterations = self.n_obs_iterations
