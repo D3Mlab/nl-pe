@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import sys
+sys.path.append('src')
 import json
 import csv
 
@@ -15,7 +16,7 @@ from nl_pe.utils.text_processing import list_to_text_block
 # how many new queries to generate per test query
 k_new_qs = 4
 # how many test queries to process, process all if None
-n_test_qs = 2
+n_test_qs = None
 # LLM -- use these to overwrite the values in config['llm']
 model_name = "gpt-5"
 model_class = "OpenAILLM"

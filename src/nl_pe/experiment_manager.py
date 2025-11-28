@@ -69,11 +69,24 @@ class ExperimentManager():
         qids = qs_df.iloc[:, 0].tolist()
         queries = qs_df.iloc[:, 1].tolist()
 
-        for qid, query in zip(qids, queries):
+        #read query reformulations if they exist
+        q_reformulations = qs_df.iloc[:, 2:].apply(
+            lambda row: [str(x) for x in row if not pd.isna(x)],
+            axis=1
+        ).tolist()
+
+        for qid, query, q_reforms in zip(qids, queries, q_reformulations):
             try:
                 self.logger.info(f"Ranking query {qid}: {query}")
 
-                result = self.agent.act(query,qid)
+                state = {
+                "query": query,
+                'qid': qid,
+                'query_reformulations': q_reforms,
+                'terminate': False
+                }
+
+                result = self.agent.act(state)
 
                 if result['top_k_psgs']:
                     self.logger.info('Rank successful')
