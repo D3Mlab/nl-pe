@@ -148,52 +148,23 @@ class GPActiveLearner(BaseActiveLearner):
         if use_query_reforms:
             reform_embs = state.get("query_reformation_embeddings", None)
 
-            self.logger.debug(f"[DEBUG] reform_embs type={type(reform_embs)}, "
-                            f"is_tensor={isinstance(reform_embs, torch.Tensor)}, "
-                            f"len_or_shape={reform_embs.size() if isinstance(reform_embs, torch.Tensor) else len(reform_embs)}")
-
-
-            if reform_embs is not None and reform_query_rel_label is not None:
-                #could clean later
-                # Handle both: list-of-tensors or 2D tensor
-                if isinstance(reform_embs, torch.Tensor):
-                    if reform_embs.numel() == 0:
-                        self.logger.debug("query_reformation_embeddings tensor is empty; skipping reformulations.")
-                    else:
-                        reform_X = reform_embs  # (n_reforms, d)
-                        n_reforms = reform_X.size(0)
-                        reform_y = torch.full(
-                            (n_reforms,),
-                            float(reform_query_rel_label),
-                            dtype=torch.float32,
-                        )
-                        X_obs = torch.cat([X_obs, reform_X], dim=0)
-                        y_obs = torch.cat([y_obs, reform_y], dim=0)
-                        self.logger.debug(
-                            f"Added {n_reforms} query reformulation embeddings "
-                            f"with label {reform_query_rel_label} to initial observations"
-                        )
-                else:
-                    # assume list of 1D tensors
-                    if len(reform_embs) == 0:
-                        self.logger.debug("query_reformation_embeddings list is empty; skipping reformulations.")
-                    else:
-                        reform_X = torch.stack(reform_embs, dim=0)  # (n_reforms, d)
-                        n_reforms = reform_X.size(0)
-                        reform_y = torch.full(
-                            (n_reforms,),
-                            float(reform_query_rel_label),
-                            dtype=torch.float32,
-                        )
-                        X_obs = torch.cat([X_obs, reform_X], dim=0)
-                        y_obs = torch.cat([y_obs, reform_y], dim=0)
-                        self.logger.debug(
-                            f"Added {n_reforms} query reformulation embeddings "
-                            f"with label {reform_query_rel_label} to initial observations"
-                        )
+            # reform_embs is expected to be a 2D tensor: (n_reforms, d)
+            if isinstance(reform_embs, torch.Tensor) and reform_embs.numel() > 0 and reform_query_rel_label is not None:
+                n_reforms = reform_embs.size(0)
+                reform_y = torch.full(
+                    (n_reforms,),
+                    float(reform_query_rel_label),
+                    dtype=torch.float32,
+                )
+                X_obs = torch.cat([X_obs, reform_embs], dim=0)
+                y_obs = torch.cat([y_obs, reform_y], dim=0)
+                self.logger.debug(
+                    f"Added {n_reforms} query reformulation embeddings "
+                    f"with label {reform_query_rel_label} to initial observations"
+                )
             else:
                 self.logger.debug(
-                    "use_query_reformulations=True but no reformulation embeddings "
+                    "use_query_reformulations=True but no valid reformulation embeddings "
                     "or reform_query_rel_label is None; skipping reformulations."
                 )
 
