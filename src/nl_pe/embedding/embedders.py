@@ -182,6 +182,25 @@ class BaseEmbedder(ABC):
         query_emb = self.embed_documents_batch([query], prompt=self.embedding_config.get("query_prompt", ''))[0]
         state["query_emb"] = query_emb
 
+    def get_reformulation_embeddings(self, state):
+        # get list of reformulated query strings (may be empty)
+        reform_texts = state.get("query_reformulation_texts", [])
+
+        # if no reformulations, return empty list
+        if not reform_texts:
+            state["query_reformulation_embeddings"] = []
+            return
+
+        # batch-embed all reformulations
+        reform_embeddings = self.embed_documents_batch(
+            reform_texts,
+            prompt=self.embedding_config.get("query_prompt", '')
+        )
+
+        # store as list of tensors
+        state["query_reformation_embeddings"] = reform_embeddings
+
+
     def exact_knn_from_torch_all_in_mem(self, state) -> list[str]:
         #for small corpora only, loads all embeddings to GPU/CPU and uses a single matrix-vector multiply
         start_time = time.time()
