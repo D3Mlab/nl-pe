@@ -184,7 +184,7 @@ class BaseEmbedder(ABC):
 
     def get_reformulation_embeddings(self, state):
         # get list of reformulated query strings (may be empty)
-        reform_texts = state.get("query_reformulation_texts", [])
+        reform_texts = state.get("query_reformulations", [])
 
         # if no reformulations, return empty list
         if not reform_texts:

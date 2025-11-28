@@ -145,28 +145,58 @@ class GPActiveLearner(BaseActiveLearner):
         y_obs = torch.tensor([query_rel_label], dtype=torch.float32)
         self.logger.debug(f"First observation set with label {query_rel_label}")
 
-            # Optionally add query reformulation embeddings as additional observations
         if use_query_reforms:
-            reform_embs = state.get("query_reformation_embeddings", [])
-            if reform_embs and reform_query_rel_label is not None:
-                # reform_embs is expected to be a list of tensors
-                reform_X = torch.stack(reform_embs, dim=0)
-                reform_y = torch.full(
-                    (len(reform_embs),),
-                    float(reform_query_rel_label),
-                    dtype=torch.float32,
-                )
-                X_obs = torch.cat([X_obs, reform_X], dim=0)
-                y_obs = torch.cat([y_obs, reform_y], dim=0)
-                self.logger.debug(
-                    f"Added {len(reform_embs)} query reformulation embeddings "
-                    f"with label {reform_query_rel_label} to initial observations"
-                )
+            reform_embs = state.get("query_reformation_embeddings", None)
+
+            self.logger.debug(f"[DEBUG] reform_embs type={type(reform_embs)}, "
+                            f"is_tensor={isinstance(reform_embs, torch.Tensor)}, "
+                            f"len_or_shape={reform_embs.size() if isinstance(reform_embs, torch.Tensor) else len(reform_embs)}")
+
+
+            if reform_embs is not None and reform_query_rel_label is not None:
+                #could clean later
+                # Handle both: list-of-tensors or 2D tensor
+                if isinstance(reform_embs, torch.Tensor):
+                    if reform_embs.numel() == 0:
+                        self.logger.debug("query_reformation_embeddings tensor is empty; skipping reformulations.")
+                    else:
+                        reform_X = reform_embs  # (n_reforms, d)
+                        n_reforms = reform_X.size(0)
+                        reform_y = torch.full(
+                            (n_reforms,),
+                            float(reform_query_rel_label),
+                            dtype=torch.float32,
+                        )
+                        X_obs = torch.cat([X_obs, reform_X], dim=0)
+                        y_obs = torch.cat([y_obs, reform_y], dim=0)
+                        self.logger.debug(
+                            f"Added {n_reforms} query reformulation embeddings "
+                            f"with label {reform_query_rel_label} to initial observations"
+                        )
+                else:
+                    # assume list of 1D tensors
+                    if len(reform_embs) == 0:
+                        self.logger.debug("query_reformation_embeddings list is empty; skipping reformulations.")
+                    else:
+                        reform_X = torch.stack(reform_embs, dim=0)  # (n_reforms, d)
+                        n_reforms = reform_X.size(0)
+                        reform_y = torch.full(
+                            (n_reforms,),
+                            float(reform_query_rel_label),
+                            dtype=torch.float32,
+                        )
+                        X_obs = torch.cat([X_obs, reform_X], dim=0)
+                        y_obs = torch.cat([y_obs, reform_y], dim=0)
+                        self.logger.debug(
+                            f"Added {n_reforms} query reformulation embeddings "
+                            f"with label {reform_query_rel_label} to initial observations"
+                        )
             else:
                 self.logger.debug(
                     "use_query_reformulations=True but no reformulation embeddings "
                     "or reform_query_rel_label is None; skipping reformulations."
                 )
+
     
         # Number of active learning iterations (may be reduced by warm start)
         n_iterations = self.n_obs_iterations
@@ -306,8 +336,13 @@ class GPActiveLearner(BaseActiveLearner):
         sorted_indices = sorted(range(len(posterior_means)), key=lambda i: posterior_means[i], reverse=True)
         doc_ids = state["doc_ids"]
         state["top_k_psgs"] = [doc_ids[i] for i in sorted_indices[:k_final]]
+
+        # pop embeddings
         if "query_emb" in state:
-            state["query_emb"] = state["query_emb"].tolist()
+            state.pop("query_emb")
+        if "query_reformation_embeddings" in state:
+            state.pop("query_reformation_embeddings")
+
         self.logger.debug(f"Final ranked list created with top 5 docs: {state['top_k_psgs'][:5]}")
 
         
