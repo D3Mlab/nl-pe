@@ -11,6 +11,9 @@ from matplotlib import pyplot as plt
 from nl_pe.utils.setup_logging import setup_logging
 from pathlib import Path
 import yaml
+import time
+from contextlib import nullcontext
+
 
 class GPInference:
     def __init__(self, config_path):
@@ -34,86 +37,150 @@ class GPInference:
         )
 
     def run_inference_test(self):
+        """
+        Runs a single GP regression experiment:
+        - sample training data from a ground-truth function on [0,1]^d
+        - fit an Exact GP
+        - evaluate posterior mean + variance on test points
+        - record timing + marginal log likelihood
+        """
 
-        #use 42 to seed all random number generators for reproducibility
+        # ------------------------------------------------------------------
+        # Reproducibility
+        # ------------------------------------------------------------------
+        seed = 42
+        np.random.seed(seed)
+        torch.manual_seed(seed)
 
-        #read from config
-        n_obs = self.config.get('n_obs')
-        n_unobs = self.config.get('n_unobs')
-        d = self.config.get('d')
-        gt_func = self.config.get('gt_func')
-        devince = self.config.get('device')
+        # ------------------------------------------------------------------
+        # Read experiment configuration
+        # ------------------------------------------------------------------
+        n_obs = self.config.get("n_obs")        # number of observed points
+        n_unobs = self.config.get("n_unobs")    # number of test points
+        d = self.config.get("d")                # input dimensionality
+        gt_func = self.config.get("gt_func")    # e.g. "sin"
+        device_cfg = self.config.get("device")  # "cpu" or "cuda"
+        fast_pred = self.config.get("fast_pred", False)
+        self.logger.info(f"Fast prediction mode: {fast_pred}")
 
-        #if gt_func is 'sin' then use the make_sin_ground_truth function 
+        # Decide device: only use CUDA if explicitly requested + available
+        device = torch.device(
+            "cuda" if device_cfg == "cuda" and torch.cuda.is_available() else "cpu"
+        )
+        self.logger.info(f"Using device: {device}")
 
-        #todo: device , use cuda if gpu and available, ow cpu
+        # ------------------------------------------------------------------
+        # Ground-truth function
+        # ------------------------------------------------------------------
+        if gt_func == "sin":
+            f_gt = make_sin_ground_truth(d, seed=seed)
+        else:
+            raise ValueError(f"Unknown ground-truth function: {gt_func}")
 
-        #to do -- test gpu exact vs approximate inference 
-        
-        #gt generation function example usage
-        d = 5
-        f = make_sin_ground_truth(d, seed=42)
+        # ------------------------------------------------------------------
+        # Generate training data in [0,1]^d
+        # ------------------------------------------------------------------
+        # Sample inputs uniformly from the hypercube
+        X_train_np = np.random.rand(n_obs, d)
+        y_train_np = f_gt(X_train_np)
 
-        X = np.random.rand(100, d)
-        y = f(X)  # shape (100,)
+        # Convert to torch tensors
+        train_x = torch.from_numpy(X_train_np).float().to(device)
+        train_y = torch.from_numpy(y_train_np).float().to(device)
 
-                #otherwise modify the following tutorial code to fit into our framework
-
-        #modify this to randomly space n_obs points accross the [0,1]xd hypercube
-        train_x = torch.linspace(0, 1, 100)
-        # get true function values, modify to use OUR function, not this 1d sin function 
-        train_y = torch.sin(train_x * (2 * math.pi)) + torch.randn(train_x.size()) * math.sqrt(0.04)
-
+        # ------------------------------------------------------------------
+        # Define Exact GP model
+        # ------------------------------------------------------------------
         class ExactGPModel(gpytorch.models.ExactGP):
             def __init__(self, train_x, train_y, likelihood):
-                super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
+                super().__init__(train_x, train_y, likelihood)
                 self.mean_module = gpytorch.means.ConstantMean()
-                self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+
+                # RBF kernel with outputscale
+                self.covar_module = gpytorch.kernels.ScaleKernel(
+                    gpytorch.kernels.RBFKernel()
+                )
 
             def forward(self, x):
                 mean_x = self.mean_module(x)
                 covar_x = self.covar_module(x)
                 return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
-            #
+        # ------------------------------------------------------------------
+        # Model + likelihood initialization (timed)
+        # ------------------------------------------------------------------
+        init_time_start = time.time()
 
-        init_time_start = #now
+        likelihood = gpytorch.likelihoods.GaussianLikelihood().to(device)
+        model = ExactGPModel(train_x, train_y, likelihood).to(device)
 
-        # initialize likelihood and model
-        likelihood = gpytorch.likelihoods.GaussianLikelihood()
-        model = ExactGPModel(train_x, train_y, likelihood)
+        init_time = time.time() - init_time_start
 
-        init_time = #now - init_time_start
 
-        #modify to only use cuda if available and requested!
-        train_x = train_x.cuda()
-        train_y = train_y.cuda()
-        model = model.cuda()
-        likelihood = likelihood.cuda()
+        mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+        final_mll = mll(model(train_x), train_y).item()
 
-        #modify this to use n_unobs randomly spaces test points in [0,1]xd
-        test_x = torch.linspace(0, 1, 51).cuda()
+        # ------------------------------------------------------------------
+        # Generate test points in [0,1]^d
+        # ------------------------------------------------------------------
+        X_test_np = np.random.rand(n_unobs, d)
+        test_x = torch.from_numpy(X_test_np).float().to(device)
 
-        #start eval timer
-        # Get into evaluation (predictive posterior) mode
+        # ------------------------------------------------------------------
+        # Evaluation (posterior mean and *function* variance)
+        # ------------------------------------------------------------------
+        eval_time_start = time.time()
+
         model.eval()
         likelihood.eval()
 
+        #todo -- adjust to use fast , optionally as per config setting
 
-        #modify this to get the std of the function at test points (so not the likelihood and confidence region!)
-        with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            observed_pred = likelihood(model(test_x))
-            mean = observed_pred.mean
-            lower, upper = observed_pred.confidence_region()
+        fast_ctx = gpytorch.settings.fast_pred_var() if fast_pred else nullcontext()
+        with torch.no_grad(), fast_ctx:
+            # Latent function posterior (no observation noise)
+            posterior = model(test_x)
+            mean = posterior.mean
+            std = posterior.variance.sqrt()
 
-        #end eval timer 
+        eval_time = time.time() - eval_time_start
 
-        #record results to detailed_results.json in self.exp_dir
+        #todo - save results to a mean_std.csv file in exp_dir with columns: mean, std
 
-        # in the results includ mll for marginal log loss under "mll" key in json
-        #also store
-        #"init_time"
-        #"eval_time"
+        # ------------------------------------------------------------------
+        # Save results
+        # ------------------------------------------------------------------
+        results = {
+            "n_obs": n_obs,
+            "n_unobs": n_unobs,
+            "d": d,
+            "gt_func": gt_func,
+            "device": str(device),
+            "mll": final_mll,
+            "init_time": init_time,
+            "eval_time": eval_time,
+        }
+
+        results_path = self.exp_dir / "detailed_results.json"
+        with open(results_path, "w") as f:
+            json.dump(results, f, indent=2)
+
+        self.logger.info(f"Results written to {results_path}")
+
+        # Move tensors to CPU and convert to numpy
+        mean_np = mean.detach().cpu().numpy()
+        std_np = std.detach().cpu().numpy()
+
+        df = pd.DataFrame({
+            "mean": mean_np,
+            "std": std_np,
+        })
+
+        csv_path = self.exp_dir / "mean_std.csv"
+        df.to_csv(csv_path, index=False)
+
+        self.logger.info(f"Saved predictive mean/std to {csv_path}")
+
 
 
 def make_sin_ground_truth(d, seed=0):
