@@ -103,6 +103,7 @@ class ExperimentManager():
                 self.logger.error(f'Failed to rank or write results for query {qid}: {str(e)}')
 
     def tune_gp_all_queries(self):
+        #needs to be corrected -- it uses only on GP model for all queries, with y's sampled in batches for training from different queries
         """
         Tune shared GP hyperparameters over all training queries.
 
