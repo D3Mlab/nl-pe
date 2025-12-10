@@ -10,7 +10,7 @@ import yaml
 # ============================================================
 
 BASE_EXP_DIR = Path(
-    "trials/gps/exact/inference_only_speed/no_fast/gpu"
+    "trials/gps/exact/inference_only_speed/fast/gpu/dim_study"
 )
 
 BASE_CONFIG = {
@@ -19,7 +19,7 @@ BASE_CONFIG = {
     "d": 1,
     "gt_func": "sin",
     "device": "cuda",
-    "fast_pred": False,
+    "fast_pred": True,
 }
 
 # ============================================================
@@ -27,15 +27,16 @@ BASE_CONFIG = {
 # The variable name MUST match the config key
 # ============================================================
 
-n_obs = [10,100,1000,3000,10000]
-n_unobs = [1000, 10000, 100000]
+n_obs = [1000, 3000, 10000]
+n_unobs = [10000, 100000]
 # You can add:
 # d = [1, 5, 10]
+d = [1,1000]
 
 GRID_PARAMS = {
     "n_obs": n_obs,
     "n_unobs": n_unobs,
-    # "d": d,
+    "d": d,
 }
 
 # ============================================================
@@ -43,7 +44,7 @@ GRID_PARAMS = {
 # ============================================================
 
 def build_exp_dir(base_dir, config):
-    """
+    """s
     Path formula:
     <base>/<n_obs>obs/<n_unobs>unobs/d<d>
     """
