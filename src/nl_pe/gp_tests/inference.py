@@ -20,9 +20,9 @@ class GPInference:
         self.config = config        
         self.logger = setup_logging(self.__class__.__name__, config = self.config, output_file=os.path.join(self.config['exp_dir'], "experiment.log"))
         self.logger.debug(f"Initializing {self.__class__.__name__} with config: {config}")
-        self.exp_dir = self.config['exp_dir']
+        self.exp_dir = Path(self.config['exp_dir']) 
 
-    def run_inference_test(self):
+    def run_inference(self):
         """
         Runs a single GP regression experiment:
         - sample training data from a ground-truth function on [0,1]^d
@@ -154,18 +154,18 @@ class GPInference:
         self.logger.info(f"Results written to {results_path}")
 
         # Move tensors to CPU and convert to numpy
-        mean_np = mean.detach().cpu().numpy()
-        std_np = std.detach().cpu().numpy()
+        # mean_np = mean.detach().cpu().numpy()
+        # std_np = std.detach().cpu().numpy()
 
-        df = pd.DataFrame({
-            "mean": mean_np,
-            "std": std_np,
-        })
+        # df = pd.DataFrame({
+        #     "mean": mean_np,
+        #     "std": std_np,
+        # })
 
-        csv_path = self.exp_dir / "results.csv"
-        df.to_csv(csv_path, index=False)
+        # csv_path = self.exp_dir / "results.csv"
+        # df.to_csv(csv_path, index=False)
 
-        self.logger.info(f"Saved predictive mean/std to {csv_path}")
+        # self.logger.info(f"Saved predictive mean/std to {csv_path}")
 
 
 
