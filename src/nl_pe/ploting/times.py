@@ -4,6 +4,94 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
+def plot_gp_inf_times_bar(method_paths, method_names, styles=None, title=""):
+    """
+    Creates a vertical bar plot with two stacked subplots:
+      1) total inference time
+      2) inference time per unobserved point
+
+    Each method is represented as a bar.
+
+    Parameters
+    ----------
+    method_paths : list[str]
+        Paths to experiment directories containing detailed_results.json
+    method_names : list[str]
+        Labels for each method
+    styles : list[dict] or None
+        Optional matplotlib style dicts (e.g. {'color': 'blue'})
+    title : str
+        Figure title
+    """
+
+    assert len(method_paths) == len(method_names), \
+        "method_paths and method_names must have same length"
+
+    n_methods = len(method_paths)
+
+    if styles is None:
+        styles = [{}] * n_methods
+    else:
+        assert len(styles) == n_methods, \
+            "styles must match number of methods"
+
+    eval_times = []
+    per_point_times = []
+
+    # ------------------------------------------------------------
+    # Load results from JSON files
+    # ------------------------------------------------------------
+    for path in method_paths:
+        results_path = Path(path) / "detailed_results.json"
+
+        if not results_path.exists():
+            raise FileNotFoundError(f"Missing {results_path}")
+
+        with open(results_path, "r") as f:
+            results = json.load(f)
+
+        eval_time = results["eval_time"]
+        n_unobs = results["n_unobs"]
+
+        eval_times.append(eval_time)
+        per_point_times.append(eval_time / n_unobs)
+
+    # ------------------------------------------------------------
+    # Plot
+    # ------------------------------------------------------------
+    x = np.arange(n_methods)
+
+    fig, axs = plt.subplots(
+        2, 1, figsize=(10, 6), sharex=True, constrained_layout=True
+    )
+
+    # ---- Plot 1: total inference time
+    for i in range(n_methods):
+        axs[0].bar(
+            x[i],
+            eval_times[i],
+            **styles[i],
+        )
+
+    axs[0].set_ylabel("Total inference time (s)")
+    axs[0].set_title(title)
+
+    # ---- Plot 2: per-point inference time
+    for i in range(n_methods):
+        axs[1].bar(
+            x[i],
+            per_point_times[i],
+            **styles[i],
+        )
+
+    axs[1].set_ylabel("Inference time per unobserved point (s)")
+    axs[1].set_xticks(x)
+    axs[1].set_xticklabels(method_names, rotation=30, ha="right")
+
+    plt.show()
+
+    
+
 # corpus embeddings
 def plot_embedding_times(method_paths, method_names, styles=None, title="Embedding Time per Method"):
     embedding_times = []
@@ -104,7 +192,6 @@ def plot_knn_times_scatter(method_paths, method_names, styles=None, title="KNN T
     ax.grid(axis="y")
     plt.tight_layout()
     plt.show()
-
 
 # -----------------------------
 # 2. Boxplot per method (median/IQR/1.5*IQR whiskers)
