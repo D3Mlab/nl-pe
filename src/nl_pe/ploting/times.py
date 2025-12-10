@@ -4,99 +4,82 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
-def plot_gp_inf_times_bar(method_paths, method_names, styles=None, title="", log =False):
+def plot_gp_inf_times_bar(method_paths, method_names, styles=None, title="", log=False, ylims=None):
     """
     Creates a vertical bar plot with two stacked subplots:
       1) total inference time
       2) inference time per unobserved point
-
-    Each method is represented as a bar.
-
+    
     Parameters
     ----------
-    method_paths : list[str]
-        Paths to experiment directories containing detailed_results.json
-    method_names : list[str]
-        Labels for each method
-    styles : list[dict] or None
-        Optional matplotlib style dicts (e.g. {'color': 'blue'})
-    title : str
-        Figure title
+    ylims : tuple or list, optional
+        Y-axis limits as (ymin0, ymax0, ymin1, ymax1) for the two subplots.
+        If None, limits are set automatically.
     """
-
     assert len(method_paths) == len(method_names), \
         "method_paths and method_names must have same length"
-
     n_methods = len(method_paths)
-
     if styles is None:
         styles = [{}] * n_methods
     else:
         assert len(styles) == n_methods, \
             "styles must match number of methods"
-
+    
+    if ylims is not None:
+        assert len(ylims) == 4, \
+            "ylims must contain 4 values: (ymin0, ymax0, ymin1, ymax1)"
+    
     eval_times = []
     per_point_times = []
-
     # ------------------------------------------------------------
-    # Load results from JSON files
+    # Load results from JSON files (fail-soft)
     # ------------------------------------------------------------
     for path in method_paths:
         results_path = Path(path) / "detailed_results.json"
-
         if not results_path.exists():
-            raise FileNotFoundError(f"Missing {results_path}")
-
+            # Missing experiment → treat as zero
+            eval_times.append(0.0)
+            per_point_times.append(0.0)
+            continue
         with open(results_path, "r") as f:
             results = json.load(f)
-
-        eval_time = results["eval_time"]
-        n_unobs = results["n_unobs"]
-
+        eval_time = results.get("eval_time", 0.0)
+        n_unobs = results.get("n_unobs", 0)
         eval_times.append(eval_time)
-        per_point_times.append(eval_time / n_unobs)
-
+        if n_unobs > 0:
+            per_point_times.append(eval_time / n_unobs)
+        else:
+            per_point_times.append(0.0)
     # ------------------------------------------------------------
     # Plot
     # ------------------------------------------------------------
     x = np.arange(n_methods)
-
     fig, axs = plt.subplots(
         2, 1, figsize=(10, 6), sharex=True, constrained_layout=True
     )
-
     # ---- Plot 1: total inference time
     for i in range(n_methods):
-        axs[0].bar(
-            x[i],
-            eval_times[i],
-            **styles[i],
-        )
-
+        axs[0].bar(x[i], eval_times[i], **styles[i])
     axs[0].set_ylabel("Total inference time (s)")
     axs[0].set_title(title)
-
+    axs[0].grid(axis='y', alpha=0.3, linestyle='-', linewidth=0.5)
+    if ylims is not None:
+        axs[0].set_ylim(ylims[0], ylims[1])
+    
     # ---- Plot 2: per-point inference time
     for i in range(n_methods):
-        axs[1].bar(
-            x[i],
-            per_point_times[i],
-            **styles[i],
-        )
-
+        axs[1].bar(x[i], per_point_times[i], **styles[i])
     axs[1].set_ylabel("Inference time per unobserved point (s)")
     axs[1].set_xticks(x)
     axs[1].set_xticklabels(method_names, rotation=30, ha="right")
-
+    axs[1].grid(axis='y', alpha=0.3, linestyle='-', linewidth=0.5)
+    if ylims is not None:
+        axs[1].set_ylim(ylims[2], ylims[3])
+    
     if log:
         axs[0].set_yscale("log")
         axs[1].set_yscale("log")
-
-    axs[0].grid(axis="y", which="both", linestyle="--", linewidth=0.5)
-    axs[1].grid(axis="y", which="both", linestyle="--", linewidth=0.5)
-
     plt.show()
-
     
 
 # corpus embeddings
