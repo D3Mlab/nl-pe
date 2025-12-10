@@ -167,6 +167,15 @@ class GPInference:
 
         # self.logger.info(f"Saved predictive mean/std to {csv_path}")
 
+        # Explicit cleanup
+        del model
+        del likelihood
+        del train_x, train_y, test_x
+        del posterior, mean, std
+
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
 
 
 def make_sin_ground_truth(d, seed=0):

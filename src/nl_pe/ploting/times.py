@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
-def plot_gp_inf_times_bar(method_paths, method_names, styles=None, title=""):
+def plot_gp_inf_times_bar(method_paths, method_names, styles=None, title="", log =False):
     """
     Creates a vertical bar plot with two stacked subplots:
       1) total inference time
@@ -87,6 +87,13 @@ def plot_gp_inf_times_bar(method_paths, method_names, styles=None, title=""):
     axs[1].set_ylabel("Inference time per unobserved point (s)")
     axs[1].set_xticks(x)
     axs[1].set_xticklabels(method_names, rotation=30, ha="right")
+
+    if log:
+        axs[0].set_yscale("log")
+        axs[1].set_yscale("log")
+
+    axs[0].grid(axis="y", which="both", linestyle="--", linewidth=0.5)
+    axs[1].grid(axis="y", which="both", linestyle="--", linewidth=0.5)
 
     plt.show()
 

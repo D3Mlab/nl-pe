@@ -10,7 +10,7 @@ import yaml
 # ============================================================
 
 BASE_EXP_DIR = Path(
-    "trials/gps/exact/inference_only_speed/fast/gpu"
+    "trials/gps/exact/inference_only_speed/no_fast/gpu"
 )
 
 BASE_CONFIG = {
@@ -19,7 +19,7 @@ BASE_CONFIG = {
     "d": 1,
     "gt_func": "sin",
     "device": "cuda",
-    "fast_pred": True,
+    "fast_pred": False,
 }
 
 # ============================================================
@@ -27,7 +27,7 @@ BASE_CONFIG = {
 # The variable name MUST match the config key
 # ============================================================
 
-n_obs = [10, 100, 1000]
+n_obs = [10,100,1000,3000,10000]
 n_unobs = [1000, 10000, 100000]
 # You can add:
 # d = [1, 5, 10]
