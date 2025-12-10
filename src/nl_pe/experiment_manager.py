@@ -102,6 +102,11 @@ class ExperimentManager():
             except Exception as e:
                 self.logger.error(f'Failed to rank or write results for query {qid}: {str(e)}')
 
+    def gp_inf(self):
+        self.logger.info("Starting IR experiment...")
+        from nl_pe.gp_tests.inference import GPInference
+        gp = 
+
     def tune_gp_all_queries(self):
         #needs to be corrected -- it uses only on GP model for all queries, with y's sampled in batches for training from different queries
         """

@@ -16,25 +16,11 @@ from contextlib import nullcontext
 
 
 class GPInference:
-    def __init__(self, config_path):
-        # config_path: path to config.yaml
-        self.config_path = Path(config_path).resolve()
-        self.exp_dir = self.config_path.parent
-
-        # load config.yaml
-        with open(self.config_path, "r") as f:
-            self.config = yaml.safe_load(f)
-
-        self.logger = setup_logging(
-            self.__class__.__name__,
-            config=self.config,
-            output_file=self.exp_dir / "experiment.log",
-        )
-
-        self.logger.debug(
-            f"Initializing {self.__class__.__name__} "
-            f"with config at {self.config_path}"
-        )
+    def __init__(self, config):
+        self.config = config        
+        self.logger = setup_logging(self.__class__.__name__, config = self.config, output_file=os.path.join(self.config['exp_dir'], "experiment.log"))
+        self.logger.debug(f"Initializing {self.__class__.__name__} with config: {config}")
+        self.exp_dir = self.config['exp_dir']
 
     def run_inference_test(self):
         """
@@ -176,7 +162,7 @@ class GPInference:
             "std": std_np,
         })
 
-        csv_path = self.exp_dir / "mean_std.csv"
+        csv_path = self.exp_dir / "results.csv"
         df.to_csv(csv_path, index=False)
 
         self.logger.info(f"Saved predictive mean/std to {csv_path}")
