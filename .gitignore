@@ -578,3 +578,4 @@ FodyWeavers.xsd
 #local files
 data/
 trials
+coding_prompts/
