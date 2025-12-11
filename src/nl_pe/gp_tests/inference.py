@@ -46,6 +46,7 @@ class GPInference:
         d = self.config.get("d")                # input dimensionality
         gt_func = self.config.get("gt_func")    # e.g. "sin"
         device_cfg = self.config.get("device")  # "cpu" or "cuda"
+        inf_batch_size = self.config.get("inf_batch_size", n_unobs) 
         fast_pred = self.config.get("fast_pred", False)
         self.logger.info(f"Fast prediction mode: {fast_pred}")
 
@@ -123,11 +124,30 @@ class GPInference:
         #todo -- adjust to use fast , optionally as per config setting
 
         fast_ctx = gpytorch.settings.fast_pred_var() if fast_pred else nullcontext()
+        
+        batch_size = inf_batch_size   # from config or default n_unobs
+        n_batches = int(math.ceil(n_unobs / batch_size))
+
         with torch.no_grad(), fast_ctx:
-            # Latent function posterior (no observation noise)
-            posterior = model(test_x)
-            mean = posterior.mean
-            std = posterior.variance.sqrt()
+            for i in range(n_batches):
+                start = i * batch_size
+                end = min((i + 1) * batch_size, n_unobs)
+
+                # move only this slice to GPU
+                test_x_batch = torch.from_numpy(X_test_np[start:end]).float().to(device)
+
+                # compute posterior
+                posterior = model(test_x_batch)
+
+                # FORCE materialization so GPU memory usage peaks here
+                _ = posterior.mean
+                _ = posterior.variance
+
+                # immediately free GPU memory from this batch
+                del test_x_batch
+                del posterior
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
 
         eval_time = time.time() - eval_time_start
 
