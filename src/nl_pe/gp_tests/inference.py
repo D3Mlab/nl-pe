@@ -114,24 +114,26 @@ class GPInference:
         test_x = torch.from_numpy(X_test_np).float().to(device)
 
         # ------------------------------------------------------------------
-        # Evaluation (posterior mean and *function* variance)
+        # Batched evaluation (posterior mean + variance)
         # ------------------------------------------------------------------
         eval_time_start = time.time()
 
         model.eval()
         likelihood.eval()
 
-        #todo -- adjust to use fast , optionally as per config setting
-
         fast_ctx = gpytorch.settings.fast_pred_var() if fast_pred else nullcontext()
-        
-        batch_size = inf_batch_size   # from config or default n_unobs
+
+        batch_size = inf_batch_size
         n_batches = int(math.ceil(n_unobs / batch_size))
+
+        batch_times = []  # <-- store per-batch inference durations
 
         with torch.no_grad(), fast_ctx:
             for i in range(n_batches):
                 start = i * batch_size
                 end = min((i + 1) * batch_size, n_unobs)
+
+                batch_start_time = time.time()  # <-- timer start
 
                 # move only this slice to GPU
                 test_x_batch = torch.from_numpy(X_test_np[start:end]).float().to(device)
@@ -143,6 +145,14 @@ class GPInference:
                 _ = posterior.mean
                 _ = posterior.variance
 
+                # record batch time
+                batch_time = time.time() - batch_start_time
+                batch_times.append(batch_time)
+
+                self.logger.debug(
+                    f"Batch {i+1}/{n_batches} size={end-start} took {batch_time:.5f} seconds"
+                )
+
                 # immediately free GPU memory from this batch
                 del test_x_batch
                 del posterior
@@ -150,6 +160,7 @@ class GPInference:
                     torch.cuda.empty_cache()
 
         eval_time = time.time() - eval_time_start
+
 
         #todo - save results to a mean_std.csv file in exp_dir with columns: mean, std
 
@@ -165,6 +176,7 @@ class GPInference:
             "mll": final_mll,
             "init_time": init_time,
             "eval_time": eval_time,
+            "batch_times": batch_times, 
         }
 
         results_path = self.exp_dir / "detailed_results.json"
@@ -173,19 +185,6 @@ class GPInference:
 
         self.logger.info(f"Results written to {results_path}")
 
-        # Move tensors to CPU and convert to numpy
-        # mean_np = mean.detach().cpu().numpy()
-        # std_np = std.detach().cpu().numpy()
-
-        # df = pd.DataFrame({
-        #     "mean": mean_np,
-        #     "std": std_np,
-        # })
-
-        # csv_path = self.exp_dir / "results.csv"
-        # df.to_csv(csv_path, index=False)
-
-        # self.logger.info(f"Saved predictive mean/std to {csv_path}")
 
         # Explicit cleanup
         del model
