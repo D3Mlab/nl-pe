@@ -23,5 +23,5 @@ faiss-cpu
 beir==2.2.0
 google-genai
 botorch
-ax-platform == 1.0.0
+ax-platform == 1.2.1
 torch>=2.5.1,<2.8
