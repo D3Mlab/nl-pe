@@ -10,17 +10,18 @@ import yaml
 # ============================================================
 
 BASE_EXP_DIR = Path(
-    "trials/gps/exact/inference_only_speed/batching_study/no_fast"
+    "trials/gps/exact/inference_only_speed/batching_study/fast"
 )
 
 BASE_CONFIG = {
+    "logging": {"level": "INFO"},
     "n_obs": 10,
     "n_unobs": 1000,
     "d": 1,
     "gt_func": "sin",
     "device": "cuda",
-    "fast_pred": False,
-    #"inf_batch_size": 1000,
+    "fast_pred": True,
+    "inf_batch_size": None,
 }
 
 # ============================================================
@@ -28,7 +29,7 @@ BASE_CONFIG = {
 # The variable name MUST match the config key
 # ============================================================
 
-n_obs = [1000]
+n_obs = [10000]
 n_unobs = [100000, 1000000]
 # You can add:
 # d = [1, 5, 10]
@@ -56,6 +57,7 @@ def build_exp_dir(base_dir, config):
         / f"{config['n_obs']}obs"
         / f"{config['n_unobs']}unobs"
         / f"d{config['d']}"
+        / f"b{config['inf_batch_size']}"
     )
 
 # ============================================================

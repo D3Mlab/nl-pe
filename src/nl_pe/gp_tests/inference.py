@@ -111,7 +111,6 @@ class GPInference:
         # Generate test points in [0,1]^d
         # ------------------------------------------------------------------
         X_test_np = np.random.rand(n_unobs, d)
-        test_x = torch.from_numpy(X_test_np).float().to(device)
 
         # ------------------------------------------------------------------
         # Batched evaluation (posterior mean + variance)
@@ -189,8 +188,7 @@ class GPInference:
         # Explicit cleanup
         del model
         del likelihood
-        del train_x, train_y, test_x
-        del posterior, mean, std
+        del train_x, train_y
 
         if device.type == "cuda":
             torch.cuda.empty_cache()
