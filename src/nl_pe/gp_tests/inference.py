@@ -61,8 +61,11 @@ class GPInference:
         # ------------------------------------------------------------------
         if gt_func == "sin":
             f_gt = make_sin_ground_truth(d, seed=seed)
+        elif gt_func == "nonlinear":
+            f_gt = make_nonlinear_ground_truth(d, seed=seed)
         else:
             raise ValueError(f"Unknown ground-truth function: {gt_func}")
+
 
         # ------------------------------------------------------------------
         # Generate training data in [0,1]^d
@@ -212,5 +215,48 @@ def make_sin_ground_truth(d, seed=0):
         per_dim = (a * np.sin(2 * np.pi * b * x + phi)).sum(axis=-1)
         mix = 0.5 * np.sin(x @ w)   # x @ w handles (..., d) @ (d,)
         return per_dim + mix
+
+    return f
+
+
+def make_nonlinear_ground_truth(d, seed=0):
+    rng = np.random.RandomState(seed)
+
+    # Per-dimension terms
+    a = rng.randn(d)
+    b = rng.uniform(0.5, 2.0, size=d)
+    phi = rng.uniform(0, 2*np.pi, size=d)
+
+    # Pairwise interaction strengths
+    C = rng.randn(d, d)
+    C = np.triu(C, k=1)  # upper triangular only
+
+    # Nonstationary envelope
+    mu = rng.uniform(0.0, 1.0, size=d)
+    sigma = rng.uniform(0.2, 0.5)
+    w = rng.randn(d)
+
+    def f(x):
+        """
+        x: shape (..., d)
+        returns: shape (...)
+        """
+        x = np.asarray(x)
+
+        # Per-dimension oscillations
+        term1 = (a * np.sin(2 * np.pi * b * x + phi)).sum(axis=-1)
+
+        # Pairwise interactions
+        term2 = 0.0
+        for i in range(d):
+            for j in range(i + 1, d):
+                term2 += C[i, j] * np.sin(2 * np.pi * (x[..., i] + x[..., j]))
+
+        # Nonstationary global structure
+        dist2 = np.sum((x - mu) ** 2, axis=-1)
+        envelope = np.exp(-dist2 / sigma**2)
+        term3 = envelope * np.sin(x @ w)
+
+        return term1 + term2 + term3
 
     return f
