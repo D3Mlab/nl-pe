@@ -1,3 +1,4 @@
+#may need to specify cuda wheel, eg.: python -m pip install -U -r requirements.txt  --index-url https://download.pytorch.org/whl/cu118
 boto3==1.40.36
 botocore==1.40.36
 fpdf==1.7.2
@@ -14,7 +15,6 @@ pytrec_eval==0.5
 PyYAML==6.0.2
 scikit_learn==1.7.2
 scipy==1.16.2
-torch>=2.5.1
 accelerate>=0.33.0
 transformers>=4.51.0
 sentence-transformers>=2.7.0
@@ -22,3 +22,6 @@ datasets==3.2.0
 faiss-cpu
 beir==2.2.0
 google-genai
+botorch
+ax-platform
+torch>=2.5.1,<2.8
