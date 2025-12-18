@@ -6,6 +6,7 @@ import gpytorch
 import pickle
 import faiss
 import numpy as np
+import math
 import time
 
 class BaseActiveLearner(ABC):
@@ -127,8 +128,8 @@ class GPActiveLearner(BaseActiveLearner):
         warm_start_percent = float(self.gp_config.get('warm_start_percent', 0))
 
         # Active learning config
-        al_config = self.config.get('active_learning', {})
-        acq_func_name = al_config.get('acquisition_f')
+        self.al_config = self.config.get('active_learning', {})
+        acq_func_name = self.al_config.get('acquisition_f')
         
         # Initialize lists
         state["selected_doc_ids"] = []
@@ -321,8 +322,8 @@ class GPActiveLearner(BaseActiveLearner):
         self.logger.debug(f"Computing acquisition scores using '{acq_func_name}' for {len(unobserved_indices)} unobserved documents")
         if acq_func_name == 'ts':
             return self.ts(model, all_embeddings, unobserved_indices)
-        elif acq_func_name == 'ucb':
-            return self.ucb(model, all_embeddings, unobserved_indices)
+        elif acq_func_name == 'ucb_const_beta':
+            return self.ucb_const_beta(model, all_embeddings, unobserved_indices)
         elif acq_func_name == 'greedy':
             return self.greedy(model, all_embeddings, unobserved_indices)
         elif acq_func_name == 'greedy_epsilon':
@@ -364,15 +365,24 @@ class GPActiveLearner(BaseActiveLearner):
             return self.ts(model, all_embeddings, unobserved_indices)
 
 
-    def ucb(self, model, all_embeddings, unobserved_indices):
-        raise NotImplementedError("UCB acquisition is not implemented yet")
-    #def ucb(self, model, all_embeddings, unobserved_indices):
-    #     unobserved_embs = all_embeddings[unobserved_indices]
-    #     with torch.no_grad():
-    #         pred = model(unobserved_embs)
-    #         beta = 2.0  # fixed or 2 * torch.log(torch.tensor(len(unobserved_indices) + 1))
-    #         scores = pred.mean + beta * pred.stddev
-    #     return scores
+    def ucb_const_beta(self, model, all_embeddings, unobserved_indices):
+        if 'ucb_beta_const' not in self.al_config:
+            raise KeyError(
+                "UCB acquisition requires 'ucb_beta_const' in config['active_learning']"
+            )
+        beta = float(self.al_config['ucb_beta_const'])
+        sqrt_beta = math.sqrt(beta)
+
+        self.logger.debug(f"Acquiring scores via UCB with beta={beta}")
+
+        unobserved_embs = all_embeddings[unobserved_indices]
+
+        with torch.no_grad():
+            pred = model(unobserved_embs)
+            scores = pred.mean + sqrt_beta * pred.stddev
+
+        return scores
+
 
     def greedy(self, model, all_embeddings, unobserved_indices):
         self.logger.debug("Acquiring scores via greedy: using posterior means")
