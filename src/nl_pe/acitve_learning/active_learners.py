@@ -214,43 +214,18 @@ class GPActiveLearner(BaseActiveLearner):
                         "keeping original number of active learning iterations."
                     )
 
-                self.logger.info(f"Building initial GP model after warm start with {len(X_obs)} observations")
-                model_build_start = time.time()
-                # Create GP model
-                likelihood = gpytorch.likelihoods.GaussianLikelihood()
-                likelihood.initialize(noise=observation_noise)
-                likelihood = likelihood.to(self.device)
-                model = ExactGPModel(X_obs, y_obs, likelihood, lengthscale, signal_noise).to(self.device)
-                self.logger.debug("GP model created")
-
-                # Optionally refit GP hyperparameters on all observed data
-                self._maybe_refit_gp(state, model, likelihood, X_obs, y_obs)
-                model_build_time = time.time() - model_build_start
-                state["model_update_times"].append(model_build_time)
-                self.logger.debug(f"Model update (build + optional refit) took {model_build_time:.2f} seconds")
-
-                model.eval()
-                likelihood.eval()
-
         # BO iterations
         for iteration in range(remaining_obs_post_ws):
             self.logger.debug(f"Active learning iteration {iteration + 1}/{remaining_obs_post_ws}")
-            model_build_start = time.time()
-            # Create GP model
-            likelihood = gpytorch.likelihoods.GaussianLikelihood()
-            likelihood.initialize(noise=observation_noise)
-            likelihood = likelihood.to(self.device)
-            model = ExactGPModel(X_obs, y_obs, likelihood, lengthscale, signal_noise).to(self.device)
-            self.logger.debug("GP model created for this iteration")
 
-            # Optionally refit GP hyperparameters on all observed data
-            self._maybe_refit_gp(state, model, likelihood, X_obs, y_obs)
-            model_build_time = time.time() - model_build_start
-            state["model_update_times"].append(model_build_time)
-            self.logger.debug(f"Model update (build + optional refit) took {model_build_time:.2f} seconds")
-
-            model.eval()
-            likelihood.eval()
+            model, likelihood = self._build_and_maybe_refit_gp(
+                state,
+                X_obs,
+                y_obs,
+                lengthscale=lengthscale,
+                signal_noise=signal_noise,
+                observation_noise=observation_noise,
+            )
 
             # Get acquisition start time
             acq_start = time.time()
@@ -282,11 +257,16 @@ class GPActiveLearner(BaseActiveLearner):
             y_obs = torch.cat([y_obs, torch.tensor([y_new], dtype=torch.float32).to(self.device)], dim=0)
             self.logger.debug(f"Observations updated to {len(X_obs)} points")
 
+        # Final model after all observations
+        model, likelihood = self._build_and_maybe_refit_gp(
+            state,
+            X_obs,
+            y_obs,
+            lengthscale=lengthscale,
+            signal_noise=signal_noise,
+            observation_noise=observation_noise,
+        )
 
-        #TODO: to any LLM agent, flag that we must update the MODEL with the last observation (missing, critical)!
-        # Final ranked list
-        model.eval()
-        likelihood.eval()
         n_total = self.index.ntotal
         batch_size = self.embedding_batch_size
         n_batches = math.ceil(n_total / batch_size)
@@ -423,6 +403,40 @@ class GPActiveLearner(BaseActiveLearner):
     # Old methods removed
 
 
+    def _build_and_maybe_refit_gp(
+        self,
+        state,
+        X_obs,
+        y_obs,
+        *,
+        lengthscale,
+        signal_noise,
+        observation_noise,
+    ):
+        start = time.time()
+
+        likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        likelihood.initialize(noise=observation_noise)
+        likelihood = likelihood.to(self.device)
+
+        model = ExactGPModel(
+            X_obs,
+            y_obs,
+            likelihood,
+            lengthscale,
+            signal_noise,
+        ).to(self.device)
+
+        self._maybe_refit_gp(state, model, likelihood, X_obs, y_obs)
+
+        elapsed = time.time() - start
+        state["model_update_times"].append(elapsed)
+
+        model.eval()
+        likelihood.eval()
+
+        return model, likelihood
+
 class ExactGPModel(gpytorch.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood, lengthscale, signal_noise):
         super().__init__(train_x, train_y, likelihood)
@@ -434,3 +448,6 @@ class ExactGPModel(gpytorch.models.ExactGP):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
+
+
