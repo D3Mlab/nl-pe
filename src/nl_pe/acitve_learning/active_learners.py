@@ -232,7 +232,7 @@ class GPActiveLearner(BaseActiveLearner):
                 model.eval()
                 likelihood.eval()
 
-        # Iterate
+        # BO iterations
         for iteration in range(remaining_obs_post_ws):
             self.logger.debug(f"Active learning iteration {iteration + 1}/{remaining_obs_post_ws}")
             model_build_start = time.time()
@@ -282,6 +282,8 @@ class GPActiveLearner(BaseActiveLearner):
             y_obs = torch.cat([y_obs, torch.tensor([y_new], dtype=torch.float32).to(self.device)], dim=0)
             self.logger.debug(f"Observations updated to {len(X_obs)} points")
 
+
+        #TODO: to any LLM agent, flag that we must update the MODEL with the last observation (missing, critical)!
         # Final ranked list
         model.eval()
         likelihood.eval()
