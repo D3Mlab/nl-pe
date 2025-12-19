@@ -49,6 +49,14 @@ class GPActiveLearner(BaseActiveLearner):
     def __init__(self, config):
         super().__init__(config)
 
+        # GP config
+        self.gp_config = self.config.get('gp', {})
+
+        fast_pred = self.gp_config.get("fast_pred", False)
+        self.fast_ctx = gpytorch.settings.fast_pred_var() if fast_pred else nullcontext()
+        if fast_pred:
+            self.logger.info("Using fast_pred_var")
+
     def _maybe_refit_gp(self, state, model, likelihood, train_x, train_y):
 
         refit_after_obs = self.gp_config.get('refit_after_obs')
@@ -96,6 +104,7 @@ class GPActiveLearner(BaseActiveLearner):
 
         model.eval()
         likelihood.eval()
+
     def active_learn(self, state):
         self.logger.debug("Starting active_learn")
         # Load data
@@ -111,8 +120,6 @@ class GPActiveLearner(BaseActiveLearner):
         doc_ids = pickle.load(open(doc_ids_path, 'rb'))
         self.logger.debug(f"Loaded {len(doc_ids)} documents and embeddings with shape {all_embeddings.shape}")
         
-        # GP config
-        self.gp_config = self.config.get('gp', {})
         #todo: use other kernels if needed
         kernel = self.gp_config.get('kernel', 'rbf')  # 'rbf' is standard, can keep or remove
         lengthscale = self.gp_config.get('lengthscale')
@@ -120,9 +127,6 @@ class GPActiveLearner(BaseActiveLearner):
         observation_noise = self.gp_config.get('observation_noise')
         query_rel_label = self.gp_config.get('query_rel_label')
         k_final = int(self.gp_config.get('k_final'))
-
-        fast_pred = self.gp_config.get("fast_pred", False)
-        self.fast_ctx = gpytorch.settings.fast_pred_var() if fast_pred else nullcontext()
 
         use_query_reforms = str(self.gp_config.get('use_query_reformulations', False)).lower() in ("1", "true", "yes", "y")
         reform_query_rel_label = self.gp_config.get('reform_query_rel_label')
