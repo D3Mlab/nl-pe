@@ -109,7 +109,6 @@ class GPActiveLearner(BaseActiveLearner):
         xb_np = index.reconstruct_n(0, index.ntotal)
         all_embeddings = torch.from_numpy(xb_np).float()
         doc_ids = pickle.load(open(doc_ids_path, 'rb'))
-        state["doc_ids"] = doc_ids
         self.logger.debug(f"Loaded {len(doc_ids)} documents and embeddings with shape {all_embeddings.shape}")
         
         # GP config
@@ -310,7 +309,6 @@ class GPActiveLearner(BaseActiveLearner):
         self.logger.debug("Creating final ranked list from posterior means")
         posterior_means = pred.mean.tolist()
         sorted_indices = sorted(range(len(posterior_means)), key=lambda i: posterior_means[i], reverse=True)
-        doc_ids = state["doc_ids"]
         state["top_k_psgs"] = [doc_ids[i] for i in sorted_indices[:k_final]]
 
         # pop embeddings
