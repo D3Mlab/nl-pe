@@ -19,6 +19,11 @@ class BaseActiveLearner(ABC):
         self.logger.debug(f"Initializing {self.__class__.__name__} with config: {config}")
         self.n_obs_iterations = self.config.get('active_learning', {}).get('n_obs_iterations')
 
+        # Set device
+        tensor_ops_device = self.config.get('tensor_ops_device', 'cpu')
+        self.device = torch.device('cuda' if tensor_ops_device == 'gpu' and torch.cuda.is_available() else 'cpu')
+        self.logger.info(f"Using device: {self.device}")
+
     def get_single_rel_judgment(self, state, doc_id):
         self.logger.debug(f"Getting relevance judgment for doc_id {doc_id} with qid {state.get('qid', 'unknown')}")
         if not hasattr(self, 'qrels_map'):
@@ -51,11 +56,11 @@ class GPActiveLearner(BaseActiveLearner):
 
         # Data config for index and batch size
         data_config = self.config.get('data', {})
-        self.embedding_batch_size = data_config.get('embedding_batch_size')  # default batch size
         index_path = data_config.get('index_path')
         self.index = faiss.read_index(index_path)
         doc_ids_path = data_config.get('doc_ids_path')
         self.doc_ids = pickle.load(open(doc_ids_path, 'rb'))
+        self.embedding_batch_size = data_config.get('embedding_batch_size', len(self.doc_ids))
 
         # GP config
         self.gp_config = self.config.get('gp', {})
@@ -114,9 +119,8 @@ class GPActiveLearner(BaseActiveLearner):
         likelihood.eval()
 
     def active_learn(self, state):
-        self.logger.debug("Starting active_learn")
         # Data already loaded in __init__
-        self.logger.debug(f"Using {len(self.doc_ids)} documents, batch_size={self.embedding_batch_size}")
+        self.logger.info(f"Using {len(self.doc_ids)} documents, batch_size={self.embedding_batch_size}")
         
         #todo: use other kernels if needed
         kernel = self.gp_config.get('kernel', 'rbf')  # 'rbf' is standard, can keep or remove
@@ -147,8 +151,8 @@ class GPActiveLearner(BaseActiveLearner):
         state["obs_noise"] = []
         
         # First observation: query_embedding and its label
-        X_obs = state["query_emb"].unsqueeze(0)
-        y_obs = torch.tensor([query_rel_label], dtype=torch.float32)
+        X_obs = state["query_emb"].unsqueeze(0).to(self.device)
+        y_obs = torch.tensor([query_rel_label], dtype=torch.float32).to(self.device)
         self.logger.debug(f"First observation set with label {query_rel_label}")
 
         if use_query_reforms:
@@ -161,8 +165,8 @@ class GPActiveLearner(BaseActiveLearner):
                     (n_reforms,),
                     float(reform_query_rel_label),
                     dtype=torch.float32,
-                )
-                X_obs = torch.cat([X_obs, reform_embs], dim=0)
+                ).to(self.device)
+                X_obs = torch.cat([X_obs, reform_embs.to(self.device)], dim=0)
                 y_obs = torch.cat([y_obs, reform_y], dim=0)
                 self.logger.debug(
                     f"Added {n_reforms} query reformulation embeddings "
@@ -176,6 +180,7 @@ class GPActiveLearner(BaseActiveLearner):
 
     
         # Warm start observations
+        remaining_obs_post_ws = self.n_obs_iterations
         if warm_start_percent > 0:
             top_k_psgs = state.get('top_k_psgs', [])
             if not top_k_psgs:
@@ -211,21 +216,21 @@ class GPActiveLearner(BaseActiveLearner):
 
                     # Get label and embedding
                     y_new = self.get_single_rel_judgment(state, d_id)
-                    X_new = torch.from_numpy(self.index.reconstruct(idx)).float().unsqueeze(0)
+                    X_new = torch.from_numpy(self.index.reconstruct(idx)).float().unsqueeze(0).to(self.device)
 
                     # Update observations and selected docs
                     X_obs = torch.cat([X_obs, X_new], dim=0)
-                    y_obs = torch.cat([y_obs, torch.tensor([y_new], dtype=torch.float32)], dim=0)
+                    y_obs = torch.cat([y_obs, torch.tensor([y_new], dtype=torch.float32).to(self.device)], dim=0)
                     state["selected_doc_ids"].append(d_id)
                     warm_added += 1
 
                 # Reduce the number of AL iterations by the number of warm-start observations
                 if warm_added > 0:
-                    self.n_obs_iterations = max(0, self.n_obs_iterations - warm_added)
+                    remaining_obs_post_ws = max(0, self.n_obs_iterations - warm_added)
                     self.logger.debug(
                         f"Warm start added {warm_added} observations; "
                         f"active learning iterations reduced from "
-                        f"{self.n_obs_iterations} to {self.n_obs_iterations}"
+                        f"{self.n_obs_iterations} to {remaining_obs_post_ws}"
                     )
                 else:
                     self.logger.debug(
@@ -236,9 +241,9 @@ class GPActiveLearner(BaseActiveLearner):
                 self.logger.info(f"Building initial GP model after warm start with {len(X_obs)} observations")
                 model_build_start = time.time()
                 # Create GP model
-                likelihood = gpytorch.likelihoods.GaussianLikelihood()
+                likelihood = gpytorch.likelihoods.GaussianLikelihood().to(self.device)
                 likelihood.noise = observation_noise
-                model = ExactGPModel(X_obs, y_obs, likelihood, lengthscale, signal_noise)
+                model = ExactGPModel(X_obs, y_obs, likelihood, lengthscale, signal_noise).to(self.device)
                 self.logger.debug("GP model created")
 
                 # Optionally refit GP hyperparameters on all observed data
@@ -251,13 +256,13 @@ class GPActiveLearner(BaseActiveLearner):
                 likelihood.eval()
 
         # Iterate
-        for iteration in range(self.n_obs_iterations):
-            self.logger.debug(f"Active learning iteration {iteration + 1}/{self.n_obs_iterations}")
+        for iteration in range(remaining_obs_post_ws):
+            self.logger.debug(f"Active learning iteration {iteration + 1}/{remaining_obs_post_ws}")
             model_build_start = time.time()
             # Create GP model
-            likelihood = gpytorch.likelihoods.GaussianLikelihood()
+            likelihood = gpytorch.likelihoods.GaussianLikelihood().to(self.device)
             likelihood.noise = observation_noise
-            model = ExactGPModel(X_obs, y_obs, likelihood, lengthscale, signal_noise)
+            model = ExactGPModel(X_obs, y_obs, likelihood, lengthscale, signal_noise).to(self.device)
             self.logger.debug("GP model created for this iteration")
 
             # Optionally refit GP hyperparameters on all observed data
@@ -293,9 +298,9 @@ class GPActiveLearner(BaseActiveLearner):
             self.logger.debug(f"Retrieved relevance label {y_new} for document {selected_doc_id}")
 
             # Update observations
-            X_new = torch.from_numpy(self.index.reconstruct(selected_idx)).float().unsqueeze(0)
+            X_new = torch.from_numpy(self.index.reconstruct(selected_idx)).float().unsqueeze(0).to(self.device)
             X_obs = torch.cat([X_obs, X_new], dim=0)
-            y_obs = torch.cat([y_obs, torch.tensor([y_new], dtype=torch.float32)], dim=0)
+            y_obs = torch.cat([y_obs, torch.tensor([y_new], dtype=torch.float32).to(self.device)], dim=0)
             self.logger.debug(f"Observations updated to {len(X_obs)} points")
 
         # Final ranked list
@@ -309,7 +314,7 @@ class GPActiveLearner(BaseActiveLearner):
             for i in range(n_batches):
                 start = i * batch_size
                 end = min((i + 1) * batch_size, n_total)
-                batch_embs = torch.from_numpy(self.index.reconstruct_n(start, end - start)).float()
+                batch_embs = torch.from_numpy(self.index.reconstruct_n(start, end - start)).float().to(self.device)
                 pred_batch = model(batch_embs)
                 posterior_means.extend(pred_batch.mean.tolist())
                 del batch_embs, pred_batch
@@ -352,7 +357,7 @@ class GPActiveLearner(BaseActiveLearner):
                     emb = self.index.reconstruct(idx)
                     batch_embs_list.append(emb)
                 batch_embs_np = np.array(batch_embs_list)
-                batch_embs = torch.from_numpy(batch_embs_np).float()
+                batch_embs = torch.from_numpy(batch_embs_np).float().to(self.device)
 
                 if acq_func_name == 'ts':
                     batch_max_score, batch_max_idx = self._ts_batch(model, batch_embs)
