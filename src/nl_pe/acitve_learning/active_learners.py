@@ -142,6 +142,7 @@ class GPActiveLearner(BaseActiveLearner):
         state["selected_doc_ids"] = []
         state["acquisition_scores"] = []
         state["acquisition_times"] = []
+        state["acquisition_IO_times"] = []
         state["model_update_times"] = []
         state["neg_mll"] = []
         state["lengthscale"] = []
@@ -256,7 +257,7 @@ class GPActiveLearner(BaseActiveLearner):
             # Get acquisition scores for all docs except observed
             unobserved_indices = [i for i in range(len(self.doc_ids)) if self.doc_ids[i] not in state["selected_doc_ids"]]
             self.logger.debug(f"Computing acquisition scores for {len(unobserved_indices)} unobserved documents")
-            best_idx_in_unobs, acq_score = self.compute_acquisition_scores(model, unobserved_indices, acq_func_name)
+            best_idx_in_unobs, acq_score, acq_gp_time, acq_io_time = self.compute_acquisition_scores(model, unobserved_indices, acq_func_name)
             acq_time = time.time() - acq_start
             self.logger.debug(f"Acquisition scores computed in {acq_time:.2f} seconds, max score: {acq_score:.4f}")
 
@@ -268,7 +269,8 @@ class GPActiveLearner(BaseActiveLearner):
             # Record
             state["selected_doc_ids"].append(selected_doc_id)
             state["acquisition_scores"].append(acq_score)
-            state["acquisition_times"].append(acq_time)
+            state["acquisition_times"].append(acq_gp_time)
+            state["acquisition_IO_times"].append(acq_io_time)
 
             # Get label for selected doc
             y_new = self.get_single_rel_judgment(state, selected_doc_id)
@@ -287,17 +289,27 @@ class GPActiveLearner(BaseActiveLearner):
         batch_size = self.embedding_batch_size
         n_batches = math.ceil(n_total / batch_size)
         posterior_means = []
+        final_gp_time = 0.0
+        final_io_time = 0.0
         with torch.no_grad(), self.fast_ctx:
             for i in range(n_batches):
                 start = i * batch_size
                 end = min((i + 1) * batch_size, n_total)
+                io_start = time.time()
                 batch_embs = torch.from_numpy(self.index.reconstruct_n(start, end - start)).float().to(self.device)
+                io_time = time.time() - io_start
+                final_io_time += io_time
+                gp_start = time.time()
                 pred_batch = model(batch_embs)
+                gp_time = time.time() - gp_start
+                final_gp_time += gp_time
                 posterior_means.extend(pred_batch.mean.tolist())
                 del batch_embs, pred_batch
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
+        state["final_inf_time"] = final_gp_time
+        state["final_IO_time"] = final_io_time
         self.logger.debug("Creating final ranked list from posterior means")
         sorted_indices = sorted(range(len(posterior_means)), key=lambda i: posterior_means[i], reverse=True)
         state["top_k_psgs"] = [self.doc_ids[i] for i in sorted_indices[:k_final]]
@@ -315,25 +327,34 @@ class GPActiveLearner(BaseActiveLearner):
         batch_size = self.embedding_batch_size
         best_score = float('-inf')
         best_idx_in_unobs = -1
+        total_io_time = 0.0
+        total_gp_time = 0.0
 
         if acq_func_name == 'random':
             # Special case, no embeddings needed
             best_idx_in_unobs = torch.randint(0, n_unobs, (1,)).item()
             best_score = 0.0  # dummy
-            return best_idx_in_unobs, best_score
+            return best_idx_in_unobs, best_score, 0.0, 0.0
 
         # For other methods, batch process
         with torch.no_grad(), self.fast_ctx:
             for i in range(0, n_unobs, batch_size):
                 end = min(i + batch_size, n_unobs)
                 batch_indices = unobserved_indices[i:end]
+
+                # IO time: reconstructing embeddings
+                io_start = time.time()
                 batch_embs_list = []
                 for idx in batch_indices:
                     emb = self.index.reconstruct(idx)
                     batch_embs_list.append(emb)
                 batch_embs_np = np.array(batch_embs_list)
                 batch_embs = torch.from_numpy(batch_embs_np).float().to(self.device)
+                io_time = time.time() - io_start
+                total_io_time += io_time
 
+                # GP time: model predictions
+                gp_start = time.time()
                 if acq_func_name == 'ts':
                     batch_max_score, batch_max_idx = self._ts_batch(model, batch_embs)
                 elif acq_func_name == 'ucb_const_beta':
@@ -346,6 +367,8 @@ class GPActiveLearner(BaseActiveLearner):
                     batch_max_score, batch_max_idx = self._greedy_epsilon_ts_batch(model, batch_embs)
                 else:
                     raise ValueError(f"Unknown acquisition function: {acq_func_name}")
+                gp_time = time.time() - gp_start
+                total_gp_time += gp_time
 
                 if batch_max_score > best_score:
                     best_score = batch_max_score
@@ -355,7 +378,7 @@ class GPActiveLearner(BaseActiveLearner):
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
-        return best_idx_in_unobs, best_score
+        return best_idx_in_unobs, best_score, total_gp_time, total_io_time
 
     def _ts_batch(self, model, batch_embs):
         pred = model(batch_embs)
