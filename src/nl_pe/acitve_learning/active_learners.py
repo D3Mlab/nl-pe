@@ -1,4 +1,5 @@
 from abc import ABC
+from contextlib import nullcontext
 from nl_pe.utils.setup_logging import setup_logging
 import os
 import torch
@@ -120,6 +121,9 @@ class GPActiveLearner(BaseActiveLearner):
         observation_noise = self.gp_config.get('observation_noise')
         query_rel_label = self.gp_config.get('query_rel_label')
         k_final = int(self.gp_config.get('k_final'))
+
+        fast_pred = self.gp_config.get("fast_pred", False)
+        self.fast_ctx = gpytorch.settings.fast_pred_var() if fast_pred else nullcontext()
 
         use_query_reforms = str(self.gp_config.get('use_query_reformulations', False)).lower() in ("1", "true", "yes", "y")
         reform_query_rel_label = self.gp_config.get('reform_query_rel_label')
@@ -336,7 +340,7 @@ class GPActiveLearner(BaseActiveLearner):
     def ts(self, model, all_embeddings, unobserved_indices):
         self.logger.debug("Acquiring scores via Thompson Sampling: sampling from posterior")
         unobserved_embs = all_embeddings[unobserved_indices]
-        with torch.no_grad():
+        with torch.no_grad(), self.fast_ctx:
             pred = model(unobserved_embs)
             samples = pred.sample()
         return samples
@@ -377,7 +381,7 @@ class GPActiveLearner(BaseActiveLearner):
 
         unobserved_embs = all_embeddings[unobserved_indices]
 
-        with torch.no_grad():
+        with torch.no_grad(), self.fast_ctx:
             pred = model(unobserved_embs)
             scores = pred.mean + sqrt_beta * pred.stddev
 
@@ -387,7 +391,7 @@ class GPActiveLearner(BaseActiveLearner):
     def greedy(self, model, all_embeddings, unobserved_indices):
         self.logger.debug("Acquiring scores via greedy: using posterior means")
         unobserved_embs = all_embeddings[unobserved_indices]
-        with torch.no_grad():
+        with torch.no_grad(), self.fast_ctx:
             pred = model(unobserved_embs)
             scores = pred.mean
         return scores
