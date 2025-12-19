@@ -227,14 +227,10 @@ class GPActiveLearner(BaseActiveLearner):
                 observation_noise=observation_noise,
             )
 
-            # Get acquisition start time
-            acq_start = time.time()
             # Get acquisition scores for all docs except observed
             unobserved_indices = [i for i in range(len(self.doc_ids)) if self.doc_ids[i] not in state["selected_doc_ids"]]
             self.logger.debug(f"Computing acquisition scores for {len(unobserved_indices)} unobserved documents")
             best_idx_in_unobs, acq_score, acq_gp_time, acq_io_time = self.compute_acquisition_scores(model, unobserved_indices, acq_func_name)
-            acq_time = time.time() - acq_start
-            self.logger.debug(f"Acquisition scores computed in {acq_time:.2f} seconds, max score: {acq_score:.4f}")
 
             # Select next doc
             selected_idx = unobserved_indices[best_idx_in_unobs]
@@ -399,9 +395,6 @@ class GPActiveLearner(BaseActiveLearner):
             return self._greedy_batch(model, batch_embs)
         else:
             return self._ts_batch(model, batch_embs)
-
-    # Old methods removed
-
 
     def _build_and_maybe_refit_gp(
         self,
