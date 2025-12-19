@@ -430,8 +430,8 @@ class ExactGPModel(gpytorch.models.ExactGP):
         super().__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.ConstantMean()
         self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
-        self.covar_module.base_kernel.lengthscale = lengthscale
-        self.covar_module.outputscale = signal_noise
+        self.covar_module.base_kernel.initialize(lengthscale=lengthscale)
+        self.covar_module.initialize(outputscale=signal_noise)
     def forward(self, x):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
