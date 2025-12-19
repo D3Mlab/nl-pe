@@ -49,6 +49,14 @@ class GPActiveLearner(BaseActiveLearner):
     def __init__(self, config):
         super().__init__(config)
 
+        # Data config for index and batch size
+        data_config = self.config.get('data', {})
+        self.embedding_batch_size = data_config.get('embedding_batch_size')  # default batch size
+        index_path = data_config.get('index_path')
+        self.index = faiss.read_index(index_path)
+        doc_ids_path = data_config.get('doc_ids_path')
+        self.doc_ids = pickle.load(open(doc_ids_path, 'rb'))
+
         # GP config
         self.gp_config = self.config.get('gp', {})
 
@@ -107,18 +115,8 @@ class GPActiveLearner(BaseActiveLearner):
 
     def active_learn(self, state):
         self.logger.debug("Starting active_learn")
-        # Load data
-        data_config = self.config.get('data', {})
-        index_path = data_config.get('index_path')
-        doc_ids_path = data_config.get('doc_ids_path')
-        if not index_path or not doc_ids_path:
-            raise ValueError("Index path and doc_ids_path must be specified in data config")
-        index = faiss.read_index(index_path)
-        #todo: don't load all embeddings if too large
-        xb_np = index.reconstruct_n(0, index.ntotal)
-        all_embeddings = torch.from_numpy(xb_np).float()
-        doc_ids = pickle.load(open(doc_ids_path, 'rb'))
-        self.logger.debug(f"Loaded {len(doc_ids)} documents and embeddings with shape {all_embeddings.shape}")
+        # Data already loaded in __init__
+        self.logger.debug(f"Using {len(self.doc_ids)} documents, batch_size={self.embedding_batch_size}")
         
         #todo: use other kernels if needed
         kernel = self.gp_config.get('kernel', 'rbf')  # 'rbf' is standard, can keep or remove
@@ -177,9 +175,6 @@ class GPActiveLearner(BaseActiveLearner):
                 )
 
     
-        # Number of active learning iterations (may be reduced by warm start)
-        n_iterations = self.n_obs_iterations
-
         # Warm start observations
         if warm_start_percent > 0:
             top_k_psgs = state.get('top_k_psgs', [])
@@ -203,7 +198,7 @@ class GPActiveLearner(BaseActiveLearner):
                 )
 
                 # Map doc_id -> index in doc_ids
-                docid_to_idx = {d_id: i for i, d_id in enumerate(doc_ids)}
+                docid_to_idx = {d_id: i for i, d_id in enumerate(self.doc_ids)}
 
                 warm_added = 0
                 for d_id in warm_start_doc_ids:
@@ -216,7 +211,7 @@ class GPActiveLearner(BaseActiveLearner):
 
                     # Get label and embedding
                     y_new = self.get_single_rel_judgment(state, d_id)
-                    X_new = all_embeddings[idx].unsqueeze(0)
+                    X_new = torch.from_numpy(self.index.reconstruct(idx)).float().unsqueeze(0)
 
                     # Update observations and selected docs
                     X_obs = torch.cat([X_obs, X_new], dim=0)
@@ -226,11 +221,11 @@ class GPActiveLearner(BaseActiveLearner):
 
                 # Reduce the number of AL iterations by the number of warm-start observations
                 if warm_added > 0:
-                    n_iterations = max(0, self.n_obs_iterations - warm_added)
+                    self.n_obs_iterations = max(0, self.n_obs_iterations - warm_added)
                     self.logger.debug(
                         f"Warm start added {warm_added} observations; "
                         f"active learning iterations reduced from "
-                        f"{self.n_obs_iterations} to {n_iterations}"
+                        f"{self.n_obs_iterations} to {self.n_obs_iterations}"
                     )
                 else:
                     self.logger.debug(
@@ -256,8 +251,8 @@ class GPActiveLearner(BaseActiveLearner):
                 likelihood.eval()
 
         # Iterate
-        for iteration in range(n_iterations):
-            self.logger.debug(f"Active learning iteration {iteration + 1}/{n_iterations}")
+        for iteration in range(self.n_obs_iterations):
+            self.logger.debug(f"Active learning iteration {iteration + 1}/{self.n_obs_iterations}")
             model_build_start = time.time()
             # Create GP model
             likelihood = gpytorch.likelihoods.GaussianLikelihood()
@@ -277,17 +272,15 @@ class GPActiveLearner(BaseActiveLearner):
             # Get acquisition start time
             acq_start = time.time()
             # Get acquisition scores for all docs except observed
-            unobserved_indices = [i for i in range(len(doc_ids)) if doc_ids[i] not in state["selected_doc_ids"]]
+            unobserved_indices = [i for i in range(len(self.doc_ids)) if self.doc_ids[i] not in state["selected_doc_ids"]]
             self.logger.debug(f"Computing acquisition scores for {len(unobserved_indices)} unobserved documents")
-            acq_scores = self.compute_acquisition_scores(model, all_embeddings, unobserved_indices, acq_func_name)
+            best_idx_in_unobs, acq_score = self.compute_acquisition_scores(model, unobserved_indices, acq_func_name)
             acq_time = time.time() - acq_start
-            self.logger.debug(f"Acquisition scores computed in {acq_time:.2f} seconds, max score: {torch.max(acq_scores).item():.4f}")
-            
+            self.logger.debug(f"Acquisition scores computed in {acq_time:.2f} seconds, max score: {acq_score:.4f}")
+
             # Select next doc
-            best_idx_in_unobs = torch.argmax(acq_scores).item()
             selected_idx = unobserved_indices[best_idx_in_unobs]
-            selected_doc_id = doc_ids[selected_idx]
-            acq_score = acq_scores[best_idx_in_unobs].item()
+            selected_doc_id = self.doc_ids[selected_idx]
             self.logger.debug(f"Selected document {selected_doc_id} with acquisition score {acq_score:.4f}")
 
             # Record
@@ -300,7 +293,7 @@ class GPActiveLearner(BaseActiveLearner):
             self.logger.debug(f"Retrieved relevance label {y_new} for document {selected_doc_id}")
 
             # Update observations
-            X_new = all_embeddings[selected_idx].unsqueeze(0)
+            X_new = torch.from_numpy(self.index.reconstruct(selected_idx)).float().unsqueeze(0)
             X_obs = torch.cat([X_obs, X_new], dim=0)
             y_obs = torch.cat([y_obs, torch.tensor([y_new], dtype=torch.float32)], dim=0)
             self.logger.debug(f"Observations updated to {len(X_obs)} points")
@@ -308,12 +301,24 @@ class GPActiveLearner(BaseActiveLearner):
         # Final ranked list
         model.eval()
         likelihood.eval()
-        pred = likelihood(model(all_embeddings))
+        n_total = self.index.ntotal
+        batch_size = self.embedding_batch_size
+        n_batches = math.ceil(n_total / batch_size)
+        posterior_means = []
+        with torch.no_grad(), self.fast_ctx:
+            for i in range(n_batches):
+                start = i * batch_size
+                end = min((i + 1) * batch_size, n_total)
+                batch_embs = torch.from_numpy(self.index.reconstruct_n(start, end - start)).float()
+                pred_batch = model(batch_embs)
+                posterior_means.extend(pred_batch.mean.tolist())
+                del batch_embs, pred_batch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         self.logger.debug("Creating final ranked list from posterior means")
-        posterior_means = pred.mean.tolist()
         sorted_indices = sorted(range(len(posterior_means)), key=lambda i: posterior_means[i], reverse=True)
-        state["top_k_psgs"] = [doc_ids[i] for i in sorted_indices[:k_final]]
+        state["top_k_psgs"] = [self.doc_ids[i] for i in sorted_indices[:k_final]]
 
         # pop embeddings
         if "query_emb" in state:
@@ -324,105 +329,93 @@ class GPActiveLearner(BaseActiveLearner):
         self.logger.debug(f"Final ranked list created with top 5 docs: {state['top_k_psgs'][:5]}")
 
         
-    def compute_acquisition_scores(self, model, all_embeddings, unobserved_indices, acq_func_name):
+    def compute_acquisition_scores(self, model, unobserved_indices, acq_func_name):
         self.logger.debug(f"Computing acquisition scores using '{acq_func_name}' for {len(unobserved_indices)} unobserved documents")
-        if acq_func_name == 'ts':
-            return self.ts(model, all_embeddings, unobserved_indices)
-        elif acq_func_name == 'ucb_const_beta':
-            return self.ucb_const_beta(model, all_embeddings, unobserved_indices)
-        elif acq_func_name == 'greedy':
-            return self.greedy(model, all_embeddings, unobserved_indices)
-        elif acq_func_name == 'greedy_epsilon':
-            return self.greedy_epsilon(model, all_embeddings, unobserved_indices)
-        elif acq_func_name == 'random':
-            return self.random(all_embeddings, unobserved_indices)
-        elif acq_func_name == 'greedy_epsilon_ts':
-            return self.greedy_epsilon_ts(model, all_embeddings, unobserved_indices)
+        n_unobs = len(unobserved_indices)
+        batch_size = self.embedding_batch_size
+        best_score = float('-inf')
+        best_idx_in_unobs = -1
 
-    def ts(self, model, all_embeddings, unobserved_indices):
-        self.logger.debug("Acquiring scores via Thompson Sampling: sampling from posterior")
-        unobserved_embs = all_embeddings[unobserved_indices]
+        if acq_func_name == 'random':
+            # Special case, no embeddings needed
+            best_idx_in_unobs = torch.randint(0, n_unobs, (1,)).item()
+            best_score = 0.0  # dummy
+            return best_idx_in_unobs, best_score
+
+        # For other methods, batch process
         with torch.no_grad(), self.fast_ctx:
-            pred = model(unobserved_embs)
-            samples = pred.sample()
-        return samples
-    
-    def greedy_epsilon_ts(self, model, all_embeddings, unobserved_indices):
-        """
-        With probability (1 - epsilon), return greedy (posterior mean) scores.
-        With probability epsilon, return Thompson Sampling scores.
+            for i in range(0, n_unobs, batch_size):
+                end = min(i + batch_size, n_unobs)
+                batch_indices = unobserved_indices[i:end]
+                batch_embs_list = []
+                for idx in batch_indices:
+                    emb = self.index.reconstruct(idx)
+                    batch_embs_list.append(emb)
+                batch_embs_np = np.array(batch_embs_list)
+                batch_embs = torch.from_numpy(batch_embs_np).float()
 
-        This is an epsilon-greedy variant where the exploration strategy
-        is Thompson Sampling rather than uniform random.
-        """
-        epsilon = self.config.get('active_learning', {}).get('epsilon')
+                if acq_func_name == 'ts':
+                    batch_max_score, batch_max_idx = self._ts_batch(model, batch_embs)
+                elif acq_func_name == 'ucb_const_beta':
+                    batch_max_score, batch_max_idx = self._ucb_batch(model, batch_embs)
+                elif acq_func_name == 'greedy':
+                    batch_max_score, batch_max_idx = self._greedy_batch(model, batch_embs)
+                elif acq_func_name == 'greedy_epsilon':
+                    batch_max_score, batch_max_idx = self._greedy_epsilon_batch(model, batch_embs)
+                elif acq_func_name == 'greedy_epsilon_ts':
+                    batch_max_score, batch_max_idx = self._greedy_epsilon_ts_batch(model, batch_embs)
+                else:
+                    raise ValueError(f"Unknown acquisition function: {acq_func_name}")
 
-        if torch.rand(1).item() > epsilon:
-            # Exploit: greedy by posterior mean
-            self.logger.debug(
-                f"Greedy-epsilon-TS: taking GREEDY action (1-epsilon={1 - epsilon:.3f})"
-            )
-            return self.greedy(model, all_embeddings, unobserved_indices)
-        else:
-            # Explore: Thompson sample from posterior
-            self.logger.debug(
-                f"Greedy-epsilon-TS: taking TS action (epsilon={epsilon:.3f})"
-            )
-            return self.ts(model, all_embeddings, unobserved_indices)
+                if batch_max_score > best_score:
+                    best_score = batch_max_score
+                    best_idx_in_unobs = i + batch_max_idx
 
+                del batch_embs
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
-    def ucb_const_beta(self, model, all_embeddings, unobserved_indices):
+        return best_idx_in_unobs, best_score
+
+    def _ts_batch(self, model, batch_embs):
+        pred = model(batch_embs)
+        samples = pred.sample()
+        max_score, max_idx = torch.max(samples, dim=0)
+        return max_score.item(), max_idx.item()
+
+    def _ucb_batch(self, model, batch_embs):
         if 'ucb_beta_const' not in self.al_config:
-            raise KeyError(
-                "UCB acquisition requires 'ucb_beta_const' in config['active_learning']"
-            )
+            raise KeyError("UCB acquisition requires 'ucb_beta_const' in config['active_learning']")
         beta = float(self.al_config['ucb_beta_const'])
         sqrt_beta = math.sqrt(beta)
+        pred = model(batch_embs)
+        scores = pred.mean + sqrt_beta * pred.stddev
+        max_score, max_idx = torch.max(scores, dim=0)
+        return max_score.item(), max_idx.item()
 
-        self.logger.debug(f"Acquiring scores via UCB with beta={beta}")
+    def _greedy_batch(self, model, batch_embs):
+        pred = model(batch_embs)
+        scores = pred.mean
+        max_score, max_idx = torch.max(scores, dim=0)
+        return max_score.item(), max_idx.item()
 
-        unobserved_embs = all_embeddings[unobserved_indices]
-
-        with torch.no_grad(), self.fast_ctx:
-            pred = model(unobserved_embs)
-            scores = pred.mean + sqrt_beta * pred.stddev
-
-        return scores
-
-
-    def greedy(self, model, all_embeddings, unobserved_indices):
-        self.logger.debug("Acquiring scores via greedy: using posterior means")
-        unobserved_embs = all_embeddings[unobserved_indices]
-        with torch.no_grad(), self.fast_ctx:
-            pred = model(unobserved_embs)
-            scores = pred.mean
-        return scores
-
-    def greedy_epsilon(self, model, all_embeddings, unobserved_indices):
-        """
-        With probability (1 - epsilon), return greedy scores.
-        With probability epsilon, return random scores (so that the selected
-        action is random when argmax is taken).
-        """
+    def _greedy_epsilon_batch(self, model, batch_embs):
         epsilon = self.config.get('active_learning', {}).get('epsilon')
-
         if torch.rand(1).item() > epsilon:
-            # Greedy case
-            self.logger.debug(f"Greedy-epsilon: taking GREEDY action (1-epsilon={1-epsilon})")
-            return self.greedy(model, all_embeddings, unobserved_indices)
+            return self._greedy_batch(model, batch_embs)
         else:
-            # Random case
-            self.logger.debug(f"Greedy-epsilon: taking RANDOM action (epsilon={epsilon})")
-            n = len(unobserved_indices)
-            # Uniform random scores ensures argmax is random
-            return torch.randn(n, device=all_embeddings.device)
+            batch_size = batch_embs.size(0)
+            random_idx = torch.randint(0, batch_size, (1,)).item()
+            return float('-inf'), random_idx  # low score so not selected
 
+    def _greedy_epsilon_ts_batch(self, model, batch_embs):
+        epsilon = self.config.get('active_learning', {}).get('epsilon')
+        if torch.rand(1).item() > epsilon:
+            return self._greedy_batch(model, batch_embs)
+        else:
+            return self._ts_batch(model, batch_embs)
 
-    def random(self, all_embeddings, unobserved_indices):
-        self.logger.debug("Acquiring scores randomly (baseline)")
-        n = len(unobserved_indices)
-        scores = torch.randn(n)
-        return scores
+    # Old methods removed
 
 
 class ExactGPModel(gpytorch.models.ExactGP):
