@@ -241,8 +241,9 @@ class GPActiveLearner(BaseActiveLearner):
                 self.logger.info(f"Building initial GP model after warm start with {len(X_obs)} observations")
                 model_build_start = time.time()
                 # Create GP model
-                likelihood = gpytorch.likelihoods.GaussianLikelihood().to(self.device)
-                likelihood.noise = observation_noise
+                likelihood = gpytorch.likelihoods.GaussianLikelihood()
+                likelihood.initialize(noise=observation_noise)
+                likelihood = likelihood.to(self.device)
                 model = ExactGPModel(X_obs, y_obs, likelihood, lengthscale, signal_noise).to(self.device)
                 self.logger.debug("GP model created")
 
@@ -260,8 +261,9 @@ class GPActiveLearner(BaseActiveLearner):
             self.logger.debug(f"Active learning iteration {iteration + 1}/{remaining_obs_post_ws}")
             model_build_start = time.time()
             # Create GP model
-            likelihood = gpytorch.likelihoods.GaussianLikelihood().to(self.device)
-            likelihood.noise = observation_noise
+            likelihood = gpytorch.likelihoods.GaussianLikelihood()
+            likelihood.initialize(noise=observation_noise)
+            likelihood = likelihood.to(self.device)
             model = ExactGPModel(X_obs, y_obs, likelihood, lengthscale, signal_noise).to(self.device)
             self.logger.debug("GP model created for this iteration")
 
