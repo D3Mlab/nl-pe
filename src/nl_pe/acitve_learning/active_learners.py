@@ -130,8 +130,6 @@ class GPActiveLearner(BaseActiveLearner):
         query_rel_label = self.gp_config.get('query_rel_label')
         k_final = int(self.gp_config.get('k_final'))
 
-        use_query_reforms = str(self.gp_config.get('use_query_reformulations', False)).lower() in ("1", "true", "yes", "y")
-        reform_query_rel_label = self.gp_config.get('reform_query_rel_label')
 
         #warm start percent: none or 0 to 100      
         warm_start_percent = float(self.gp_config.get('warm_start_percent', 0))
@@ -154,29 +152,6 @@ class GPActiveLearner(BaseActiveLearner):
         X_obs = state["query_emb"].unsqueeze(0).to(self.device)
         y_obs = torch.tensor([query_rel_label], dtype=torch.float32).to(self.device)
         self.logger.debug(f"First observation set with label {query_rel_label}")
-
-        if use_query_reforms:
-            reform_embs = state.get("query_reformation_embeddings", None)
-
-            # reform_embs is expected to be a 2D tensor: (n_reforms, d)
-            if isinstance(reform_embs, torch.Tensor) and reform_embs.numel() > 0 and reform_query_rel_label is not None:
-                n_reforms = reform_embs.size(0)
-                reform_y = torch.full(
-                    (n_reforms,),
-                    float(reform_query_rel_label),
-                    dtype=torch.float32,
-                ).to(self.device)
-                X_obs = torch.cat([X_obs, reform_embs.to(self.device)], dim=0)
-                y_obs = torch.cat([y_obs, reform_y], dim=0)
-                self.logger.debug(
-                    f"Added {n_reforms} query reformulation embeddings "
-                    f"with label {reform_query_rel_label} to initial observations"
-                )
-            else:
-                self.logger.debug(
-                    "use_query_reformulations=True but no valid reformulation embeddings "
-                    "or reform_query_rel_label is None; skipping reformulations."
-                )
 
     
         # Warm start observations
@@ -330,8 +305,6 @@ class GPActiveLearner(BaseActiveLearner):
         # pop embeddings
         if "query_emb" in state:
             state.pop("query_emb")
-        if "query_reformation_embeddings" in state:
-            state.pop("query_reformation_embeddings")
 
         self.logger.debug(f"Final ranked list created with top 5 docs: {state['top_k_psgs'][:5]}")
 

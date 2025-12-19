@@ -69,25 +69,13 @@ class ExperimentManager():
         qids = qs_df.iloc[:, 0].tolist()
         queries = qs_df.iloc[:, 1].tolist()
 
-        #read query reformulations if they exist (more than 2 columns in df)
-        if qs_df.shape[1] > 2:
-            q_reformulations = qs_df.iloc[:, 2:].apply(
-                lambda row: [str(x) for x in row if not pd.isna(x)],
-                axis=1
-            ).tolist()
-        else:
-            # no reformulation columns; one empty list per query
-            q_reformulations = [[] for _ in range(len(qs_df))]
-
-
-        for qid, query, q_reforms in zip(qids, queries, q_reformulations):
+        for qid, query in zip(qids, queries):
             try:
                 self.logger.info(f"Ranking query {qid}: {query}")
 
                 state = {
                 "query": query,
                 'qid': qid,
-                'query_reformulations': q_reforms,
                 'terminate': False
                 }
 
