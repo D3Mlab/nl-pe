@@ -435,6 +435,9 @@ class ExperimentManager():
         1) TREC run file : trec_results_raw.txt (may have duplicates from LLM reranking)
         2) JSON: detailed_results.json
         """
+        #clean result
+        result.pop('query_emb', None)
+
         query_result_dir = self.results_dir / f"{qid}"
         query_result_dir.mkdir(exist_ok=True)
         detailed_results_path = query_result_dir / "detailed_results.json"

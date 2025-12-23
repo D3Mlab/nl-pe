@@ -1,0 +1,38 @@
+agent:
+  agent_class: GeneralAgent
+  max_pipeline_iterations: 1
+  policy: PipelinePolicy
+  policy_steps:
+  - component: HuggingFaceEmbedderSentenceTransformers
+    method: get_query_embedding
+  - component: GPActiveLearner
+    method: active_learn
+embedding:
+  class: HuggingFaceEmbedderSentenceTransformers  
+  model: sentence-transformers/all-MiniLM-L6-v2
+  matryoshka_dim: Null 
+  doc_prompt: ''
+  query_prompt: ''
+  normalize: True
+  inference_batch_size: null
+  index_method: embed_all_docs_faiss_exact
+  k: 100
+data:
+  embedding_batch_size: null
+logging:
+  level: INFO
+inference_device: cpu
+tensor_ops_device: gpu
+active_learning:
+  n_obs_iterations: 100
+  acquisition_f: ucb_const_beta
+  ucb_beta_const: 1
+gp:
+  kernel: rbf
+  lengthscale: 1
+  signal_noise: 1
+  observation_noise: 1
+  query_rel_label: 2
+  fast_pred: True
+  k_final: 1000
+  
