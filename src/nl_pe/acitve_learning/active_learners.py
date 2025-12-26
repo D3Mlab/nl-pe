@@ -104,14 +104,14 @@ class GPActiveLearner(BaseActiveLearner):
         if opt_sig_noise:
             params += list(model.covar_module.parameters())  # includes outputscale
         else:
-            model.covar_module.outputscale.requires_grad_(False)
+            model.covar_module.raw_outputscale.requires_grad_(False)
             # always optimize kernel lengthscales
             params += list(model.covar_module.base_kernel.parameters())
         # optionally optimize observation noise
         if opt_noise:
             params += list(likelihood.parameters())
         else:
-            likelihood.noise.requires_grad_(False)
+            likelihood.raw_noise.requires_grad_(False)
         optimizer = torch.optim.Adam(params, lr=lr)
 
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
@@ -121,11 +121,16 @@ class GPActiveLearner(BaseActiveLearner):
             output = model(train_x)
             loss = -mll(output, train_y)
             neg_mll = loss.item()
-
             self.logger.debug(f"Refit step {step + 1}/{k_refit}, -mll={neg_mll:.6f}")
-            
-            ls_t = model.covar_module.base_kernel.lengthscale.detach().cpu()
+            loss.backward()
+            optimizer.step()
 
+        model.eval()
+        likelihood.eval()
+
+        # record only the final values after refit
+        with torch.no_grad():
+            ls_t = model.covar_module.base_kernel.lengthscale.detach().cpu()
             if ls_t.numel() == 1:
                 ls = float(ls_t.item())
             else:
@@ -133,15 +138,12 @@ class GPActiveLearner(BaseActiveLearner):
 
             sn = float(model.covar_module.outputscale.item())
             on = float(likelihood.noise.item())
-            state["neg_mll"].append(neg_mll)
-            state["lengthscale"].append(ls)
-            state["signal_noise"].append(sn)
-            state["obs_noise"].append(on)
-            loss.backward()
-            optimizer.step()
 
-        model.eval()
-        likelihood.eval()
+        state["neg_mll"].append(neg_mll)
+        state["lengthscale"].append(ls)
+        state["signal_noise"].append(sn)
+        state["obs_noise"].append(on)
+
 
     def active_learn(self, state):
         # Data already loaded in __init__
