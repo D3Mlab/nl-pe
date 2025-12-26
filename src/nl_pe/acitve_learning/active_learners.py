@@ -121,6 +121,7 @@ class GPActiveLearner(BaseActiveLearner):
             output = model(train_x)
             loss = -mll(output, train_y)
             neg_mll = loss.item()
+            state["neg_mll"].append(neg_mll)
             self.logger.debug(f"Refit step {step + 1}/{k_refit}, -mll={neg_mll:.6f}")
             loss.backward()
             optimizer.step()
