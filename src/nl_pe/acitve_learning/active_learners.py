@@ -65,6 +65,9 @@ class GPActiveLearner(BaseActiveLearner):
         # GP config
         self.gp_config = self.config.get('gp', {})
 
+        #learning config
+        self.opt_config = self.config.get('optimization', {})
+
         fast_pred = self.gp_config.get("fast_pred", False)
         self.fast_ctx = gpytorch.settings.fast_pred_var() if fast_pred else nullcontext()
         if fast_pred:
@@ -105,7 +108,14 @@ class GPActiveLearner(BaseActiveLearner):
             neg_mll = loss.item()
 
             self.logger.debug(f"Refit step {step + 1}/{k_refit}, -mll={neg_mll:.6f}")
-            ls = float(model.covar_module.base_kernel.lengthscale.item())
+            
+            ls_t = model.covar_module.base_kernel.lengthscale.detach().cpu()
+
+            if ls_t.numel() == 1:
+                ls = float(ls_t.item())
+            else:
+                ls = ls_t.squeeze().tolist()
+
             sn = float(model.covar_module.outputscale.item())
             on = float(likelihood.noise.item())
             state["neg_mll"].append(neg_mll)
@@ -138,6 +148,9 @@ class GPActiveLearner(BaseActiveLearner):
         self.al_config = self.config.get('active_learning', {})
         acq_func_name = self.al_config.get('acquisition_f')
         
+        #optimization
+        self.ard = self.opt_config.get('ard')
+
         # Initialize lists
         state["selected_doc_ids"] = []
         state["acquisition_scores"] = []
@@ -418,6 +431,7 @@ class GPActiveLearner(BaseActiveLearner):
             likelihood,
             lengthscale,
             signal_noise,
+            ard = self.ard
         ).to(self.device)
 
         self._maybe_refit_gp(state, model, likelihood, X_obs, y_obs)
@@ -431,10 +445,19 @@ class GPActiveLearner(BaseActiveLearner):
         return model, likelihood
 
 class ExactGPModel(gpytorch.models.ExactGP):
-    def __init__(self, train_x, train_y, likelihood, lengthscale, signal_noise):
+    def __init__(self, train_x, train_y, likelihood, lengthscale, signal_noise, ard=False):
         super().__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.ConstantMean()
-        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+
+
+        if ard:
+            d = train_x.size(-1)
+            base_kernel = gpytorch.kernels.RBFKernel(ard_num_dims=d)
+        else:
+            base_kernel = gpytorch.kernels.RBFKernel()
+
+        self.covar_module = gpytorch.kernels.ScaleKernel(base_kernel)
+        #assuming a scalar ls broadcast to d for now
         self.covar_module.base_kernel.initialize(lengthscale=lengthscale)
         self.covar_module.initialize(outputscale=signal_noise)
     def forward(self, x):
