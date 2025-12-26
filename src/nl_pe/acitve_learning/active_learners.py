@@ -75,10 +75,13 @@ class GPActiveLearner(BaseActiveLearner):
 
     def _maybe_refit_gp(self, state, model, likelihood, train_x, train_y):
 
-        refit_after_obs = self.gp_config.get('refit_after_obs')
-        k_refit = int(self.gp_config.get('k_refit') or 0)
-        lr = self.gp_config.get('lr')
-        k_obs_refit = int(self.gp_config.get('k_obs_refit') or 1)
+        refit_after_obs = self.opt_config.get('refit_after_obs')
+        k_refit = int(self.opt_config.get('k_refit') or 0)
+        lr = self.opt_config.get('lr')
+        k_obs_refit = int(self.opt_config.get('k_obs_refit') or 1)
+        opt_noise = bool(self.opt_config.get("opt_noise", True))
+        opt_sig_noise = bool(self.opt_config.get("opt_sig_noise", True))
+
 
         # Only refit if requested and k_refit > 0
         if str(refit_after_obs).lower() not in ("1", "true", "y", "yes", "true"):
@@ -95,10 +98,22 @@ class GPActiveLearner(BaseActiveLearner):
         if k_obs_refit is not None and k_obs_refit > 1 and (obs_count % k_obs_refit != 0):
             return
 
-        optimizer = torch.optim.Adam(
-            list(model.parameters()) + list(likelihood.parameters()),
-            lr=lr,
-        )
+        params = []
+
+        # optionally optimize outputscale (signal variance)
+        if opt_sig_noise:
+            params += list(model.covar_module.parameters())  # includes outputscale
+        else:
+            model.covar_module.outputscale.requires_grad_(False)
+            # always optimize kernel lengthscales
+            params += list(model.covar_module.base_kernel.parameters())
+        # optionally optimize observation noise
+        if opt_noise:
+            params += list(likelihood.parameters())
+        else:
+            likelihood.noise.requires_grad_(False)
+        optimizer = torch.optim.Adam(params, lr=lr)
+
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
 
         for step in range(k_refit):
