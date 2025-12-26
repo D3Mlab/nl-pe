@@ -89,45 +89,50 @@ class GPActiveLearner(BaseActiveLearner):
         if k_refit is None or k_refit <= 0:
             return
 
-        self.logger.debug(f"Refitting GP hyperparameters for {k_refit} steps")
-        model.train()
-        likelihood.train()
+        with torch.set_grad_enabled(True):
+            # ensure train tensors are real autograd tensors
+            train_x = train_x.clone()
+            train_y = train_y.clone()
+            
+            self.logger.debug(f"Refitting GP hyperparameters for {k_refit} steps")
+            model.train()
+            likelihood.train()
 
-        # Only refit every k_obs_refit observations
-        obs_count = train_x.size(0)
-        if k_obs_refit is not None and k_obs_refit > 1 and (obs_count % k_obs_refit != 0):
-            return
+            # Only refit every k_obs_refit observations
+            obs_count = train_x.size(0)
+            if k_obs_refit is not None and k_obs_refit > 1 and (obs_count % k_obs_refit != 0):
+                return
 
-        params = []
+            params = []
 
-        # optionally optimize outputscale (signal variance)
-        if opt_sig_noise:
-            params += list(model.covar_module.parameters())  # includes outputscale
-        else:
-            model.covar_module.raw_outputscale.requires_grad_(False)
-            # always optimize kernel lengthscales
-            params += list(model.covar_module.base_kernel.parameters())
-        # optionally optimize observation noise
-        if opt_noise:
-            params += list(likelihood.parameters())
-        else:
-            likelihood.raw_noise.requires_grad_(False)
-        optimizer = torch.optim.Adam(params, lr=lr)
+            # optionally optimize outputscale (signal variance)
+            if opt_sig_noise:
+                params += list(model.covar_module.parameters())  # includes outputscale
+            else:
+                model.covar_module.raw_outputscale.requires_grad_(False)
+                # always optimize kernel lengthscales
+                params += list(model.covar_module.base_kernel.parameters())
+            # optionally optimize observation noise
+            if opt_noise:
+                params += list(likelihood.parameters())
+            else:
+                likelihood.raw_noise.requires_grad_(False)
+            optimizer = torch.optim.Adam(params, lr=lr)
 
-        mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+            mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
 
-        for step in range(k_refit):
-            optimizer.zero_grad()
-            output = model(train_x)
-            loss = -mll(output, train_y)
-            neg_mll = loss.item()
-            state["neg_mll"].append(neg_mll)
-            self.logger.debug(f"Refit step {step + 1}/{k_refit}, -mll={neg_mll:.6f}")
-            loss.backward()
-            optimizer.step()
+            for step in range(k_refit):
+                optimizer.zero_grad()
+                output = model(train_x)
+                loss = -mll(output, train_y)
+                neg_mll = loss.item()
+                state["neg_mll"].append(neg_mll)
+                self.logger.debug(f"Refit step {step + 1}/{k_refit}, -mll={neg_mll:.6f}")
+                loss.backward()
+                optimizer.step()
 
-        model.eval()
-        likelihood.eval()
+            model.eval()
+            likelihood.eval()
 
         # record only the final values after refit
         with torch.no_grad():
