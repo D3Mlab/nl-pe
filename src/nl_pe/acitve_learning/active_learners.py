@@ -379,6 +379,11 @@ class GPActiveLearner(BaseActiveLearner):
                     batch_max_score, batch_max_idx = self._greedy_epsilon_batch(model, batch_embs)
                 elif acq_func_name == 'greedy_epsilon_ts':
                     batch_max_score, batch_max_idx = self._greedy_epsilon_ts_batch(model, batch_embs)
+                elif acq_func_name == 'lse_straddle':
+                    batch_max_score, batch_max_idx = self._lse_straddle_batch(model, batch_embs)
+                elif acq_func_name == 'lse_margin':
+                    batch_max_score, batch_max_idx = self._lse_margin_batch(model, batch_embs)
+
                 else:
                     raise ValueError(f"Unknown acquisition function: {acq_func_name}")
                 gp_time = time.time() - gp_start
@@ -431,6 +436,32 @@ class GPActiveLearner(BaseActiveLearner):
             return self._greedy_batch(model, batch_embs)
         else:
             return self._ts_batch(model, batch_embs)
+
+    def _lse_straddle_batch(self, model, batch_embs):
+        tau = float(self.al_config.get("lse_tau"))
+        kappa = float(self.al_config.get("lse_kappa"))
+
+        pred = model(batch_embs)
+        mu = pred.mean
+        sigma = pred.stddev
+
+        scores = -torch.abs(mu - tau) + kappa * sigma
+
+        max_score, max_idx = torch.max(scores, dim=0)
+        return max_score.item(), max_idx.item()
+
+    def _lse_margin_batch(self, model, batch_embs):
+        tau = float(self.al_config.get("lse_tau"))
+
+        pred = model(batch_embs)
+        mu = pred.mean
+        sigma = pred.stddev
+
+        scores = -torch.abs(mu - tau) / (sigma + 1e-8)
+
+        max_score, max_idx = torch.max(scores, dim=0)
+        return max_score.item(), max_idx.item()
+
 
     def _build_and_maybe_refit_gp(
         self,
