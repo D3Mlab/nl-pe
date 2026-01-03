@@ -145,7 +145,7 @@ class GPActiveLearner(BaseActiveLearner):
             sn = float(model.covar_module.outputscale.item())
             on = float(likelihood.noise.item())
 
-        state["neg_mll"].append(neg_mll)
+        #state["neg_mll"].append(neg_mll)
         state["lengthscale"].append(ls)
         state["signal_noise"].append(sn)
         state["obs_noise"].append(on)
