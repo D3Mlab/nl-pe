@@ -36,12 +36,19 @@ class AgentLogic():
                         self.qrels_map[qid][pid] = rel
             self.logger.debug(f"Loaded qrels for {len(self.qrels_map)} queries")
 
-        qid = state['qid'] 
+        qid = str(state['qid']) 
         self.logger.debug(f"Query ID: {qid}")
+
+        rel_pids_for_query = set(self.qrels_map.get(qid, {}).keys())
+
+        intersection = [pid for pid in pid_list if pid in rel_pids_for_query]
+
+        self.logger.debug(f"Relevant docs retrieved for qid {qid}: {intersection[:20]}")
+        self.logger.debug(f"Total relevant for qid {qid}: {len(rel_pids_for_query)}")
 
         # Get relevance scores for the pid_list in the same order
         scores = [self.qrels_map.get(qid, {}).get(pid, 0) for pid in pid_list]
-        self.logger.debug(f"Relevance scores for batch head: {scores[:10]}")
+        self.logger.debug(f"Relevance scores for batch head: {scores[:100]}")
 
         # Ensure pid_to_score_dict exists in state
         if "pid_to_score_dict" not in state:

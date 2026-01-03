@@ -75,7 +75,7 @@ class ExperimentManager():
 
                 state = {
                 "query": query,
-                'qid': qid,
+                'qid': str(qid),
                 'terminate': False
                 }
 

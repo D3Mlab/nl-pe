@@ -43,7 +43,7 @@ class BaseActiveLearner(ABC):
                             self.qrels_map[qid] = {}
                         self.qrels_map[qid][pid] = rel
             self.logger.debug(f"Loaded qrels for {len(self.qrels_map)} queries")
-        qid = state['qid']
+        qid = str(state['qid'])
         judgment = self.qrels_map.get(qid, {}).get(doc_id, 0)
         self.logger.debug(f"Relevance judgment for doc_id {doc_id} is {judgment}")
         return judgment
