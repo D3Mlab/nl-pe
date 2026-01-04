@@ -94,7 +94,7 @@ class GPActiveLearner(BaseActiveLearner):
         # =========================================================
         self.gp_task_type = self.gp_config.get("task_type", "regression")
 
-        # dirichlet params
+        # dirichlet + variational prior bias
         self.prior_bias_relevant = float(self.gp_config.get("prior_bias_relevant", 0.0))
         self.num_prob_samples = int(self.gp_config.get("num_prob_samples", 256))
 
@@ -115,7 +115,7 @@ class GPActiveLearner(BaseActiveLearner):
         self.logger.info(f"GP task type = {self.gp_task_type}")
 
     # ================================================================
-    # refit: exact GP case (existing)
+    # refit: exact GP case
     # ================================================================
     def _maybe_refit_gp(self, state, model, likelihood, train_x, train_y):
 
@@ -186,12 +186,10 @@ class GPActiveLearner(BaseActiveLearner):
         state["obs_noise"].append(on)
 
     # ================================================================
-    # ===== VARIATIONAL GP: TRAINING LOOP ============================
+    # VARIATIONAL TRAIN LOOP
     # ================================================================
     def _train_variational_gp(self, model, likelihood, train_x, labels):
-        """
-        Train variational GP using VariationalELBO.
-        """
+
         model.train()
         likelihood.train()
 
@@ -217,7 +215,98 @@ class GPActiveLearner(BaseActiveLearner):
         likelihood.eval()
 
     # ================================================================
-    # MAIN ACTIVE LEARNING
+    # BUILD GP (ALL MODES)
+    # ================================================================
+    def _build_and_maybe_refit_gp(
+        self,
+        state,
+        X_obs,
+        y_obs,
+        *,
+        lengthscale,
+        signal_noise,
+        observation_noise,
+    ):
+        start = time.time()
+
+        # ---------------- VARIATIONAL ----------------
+        if self.gp_task_type == "variational_binary":
+            with torch.no_grad():
+                labels = (y_obs > 0).long()
+
+            likelihood = gpytorch.likelihoods.BernoulliLikelihood().to(self.device)
+
+            model = VariationalGPClassificationModel(
+                X_obs,
+                lengthscale,
+                signal_noise,
+                ard=self.ard,
+            ).to(self.device)
+
+            # prior bias here
+            with torch.no_grad():
+                model.mean_module.initialize(constant=self.prior_bias_relevant)
+
+            self._train_variational_gp(model, likelihood, X_obs, labels)
+
+        # ---------------- DIRICHLET ----------------
+        elif self.gp_task_type == "binary_classification":
+            with torch.no_grad():
+                labels = (y_obs > 0).long()
+
+            likelihood = DirichletClassificationLikelihood(
+                labels,
+                learn_additional_noise=True
+            ).to(self.device)
+
+            transformed_targets = likelihood.transformed_targets
+            num_classes = likelihood.num_classes
+
+            model = DirichletExactGPModel(
+                X_obs,
+                transformed_targets,
+                likelihood,
+                num_classes=num_classes,
+                lengthscale=lengthscale,
+                signal_noise=signal_noise,
+                ard=self.ard,
+            ).to(self.device)
+
+            with torch.no_grad():
+                bias = torch.zeros(num_classes, device=self.device)
+                if num_classes >= 2:
+                    bias[1] = self.prior_bias_relevant
+                model.mean_module.initialize(constant=bias)
+
+            self._maybe_refit_gp(state, model, likelihood, X_obs, transformed_targets)
+
+        # ---------------- REGRESSION ----------------
+        else:
+            likelihood = gpytorch.likelihoods.GaussianLikelihood()
+            likelihood.initialize(noise=observation_noise)
+            likelihood = likelihood.to(self.device)
+
+            model = ExactGPModel(
+                X_obs,
+                y_obs,
+                likelihood,
+                lengthscale,
+                signal_noise,
+                ard=self.ard
+            ).to(self.device)
+
+            self._maybe_refit_gp(state, model, likelihood, X_obs, y_obs)
+
+        elapsed = time.time() - start
+        state["model_update_times"].append(elapsed)
+
+        model.eval()
+        likelihood.eval()
+
+        return model, likelihood
+
+    # ================================================================
+    # ACTIVE LEARNING LOOP
     # ================================================================
     def active_learn(self, state):
 
@@ -235,7 +324,6 @@ class GPActiveLearner(BaseActiveLearner):
         acq_func_name = self.al_config.get('acquisition_f')
         self.ard = self.opt_config.get('ard')
 
-        # init logs
         for k in [
             "selected_doc_ids",
             "acquisition_scores",
@@ -254,12 +342,8 @@ class GPActiveLearner(BaseActiveLearner):
 
         remaining_obs_post_ws = self.n_obs_iterations
 
-        # warm start same as before...
-        # (omitted for brevity — keep your previous warm-start block unchanged)
+        # (warm start omitted — same as before)
 
-        # ============================================================
-        # ACTIVE LEARNING LOOP
-        # ============================================================
         for iteration in range(remaining_obs_post_ws):
 
             model, likelihood = self._build_and_maybe_refit_gp(
@@ -303,9 +387,7 @@ class GPActiveLearner(BaseActiveLearner):
                 dim=0
             )
 
-        # ============================================================
         # FINAL MODEL
-        # ============================================================
         model, likelihood = self._build_and_maybe_refit_gp(
             state,
             X_obs,
@@ -315,9 +397,7 @@ class GPActiveLearner(BaseActiveLearner):
             observation_noise=observation_noise,
         )
 
-        # ============================================================
         # FINAL RANKING
-        # ============================================================
         n_total = self.index.ntotal
         batch_size = self.embedding_batch_size
         n_batches = math.ceil(n_total / batch_size)
@@ -400,7 +480,6 @@ class DirichletExactGPModel(gpytorch.models.ExactGP):
         super().__init__(train_x, train_y, likelihood)
 
         batch_shape = torch.Size((num_classes,))
-
         self.mean_module = gpytorch.means.ConstantMean(batch_shape=batch_shape)
 
         if ard:
@@ -419,9 +498,6 @@ class DirichletExactGPModel(gpytorch.models.ExactGP):
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
 
-# ================================================================
-# ===== VARIATIONAL GP CLASSIFICATION MODEL =======================
-# ================================================================
 class VariationalGPClassificationModel(ApproximateGP):
     def __init__(self, train_x, lengthscale, signal_noise, ard=False):
         variational_distribution = CholeskyVariationalDistribution(train_x.size(0))
