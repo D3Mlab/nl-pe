@@ -342,7 +342,63 @@ class GPActiveLearner(BaseActiveLearner):
 
         remaining_obs_post_ws = self.n_obs_iterations
 
-        # (warm start omitted — same as before)
+        # =========================
+        # WARM START
+        # =========================
+        if warm_start_percent > 0:
+            top_k_psgs = state.get('top_k_psgs', [])
+            if not top_k_psgs:
+                raise ValueError("Warm start requested but 'top_k_psgs' not found in state")
+
+            n_candidates = len(top_k_psgs)
+
+            if warm_start_percent >= 100.0:
+                n_warm = n_candidates
+            else:
+                n_warm = int(np.floor(n_candidates * (warm_start_percent / 100.0)))
+                if n_warm <= 0:
+                    n_warm = 1
+
+            n_warm = min(n_warm, n_candidates)
+
+            self.logger.info(
+                f"Warm start enabled: percent={warm_start_percent}, "
+                f"n_candidates={n_candidates}, n_warm={n_warm}"
+            )
+
+            docid_to_idx = {d_id: i for i, d_id in enumerate(self.doc_ids)}
+
+            warm_added = 0
+            for d_id in top_k_psgs[:n_warm]:
+                idx = docid_to_idx.get(d_id, None)
+                if idx is None:
+                    self.logger.warning(
+                        f"Warm start doc_id {d_id} not found in loaded doc_ids; skipping."
+                    )
+                    continue
+
+                y_new = self.get_single_rel_judgment(state, d_id)
+
+                X_new = torch.from_numpy(
+                    self.index.reconstruct(idx)
+                ).float().unsqueeze(0).to(self.device)
+
+                X_obs = torch.cat([X_obs, X_new], dim=0)
+                y_obs = torch.cat(
+                    [y_obs, torch.tensor([y_new], dtype=torch.float32).to(self.device)],
+                    dim=0
+                )
+
+                state["selected_doc_ids"].append(d_id)
+                warm_added += 1
+
+            if warm_added > 0:
+                remaining_obs_post_ws = max(0, self.n_obs_iterations - warm_added)
+                self.logger.info(
+                    f"Warm start added {warm_added} labeled docs — "
+                    f"reducing AL iterations to {remaining_obs_post_ws}"
+                )
+
 
         for iteration in range(remaining_obs_post_ws):
 
@@ -448,6 +504,163 @@ class GPActiveLearner(BaseActiveLearner):
 
         if "query_emb" in state:
             state.pop("query_emb")
+
+
+    def compute_acquisition_scores(self, model, unobserved_indices, acq_func_name):
+        self.logger.debug(
+            f"Computing acquisition scores using '{acq_func_name}' for {len(unobserved_indices)} unobserved documents"
+        )
+
+        n_unobs = len(unobserved_indices)
+        batch_size = self.embedding_batch_size
+        best_score = float('-inf')
+        best_idx_in_unobs = -1
+        total_io_time = 0.0
+        total_gp_time = 0.0
+
+        if acq_func_name == 'random':
+            best_idx_in_unobs = torch.randint(0, n_unobs, (1,)).item()
+            best_score = 0.0
+            return best_idx_in_unobs, best_score, 0.0, 0.0
+
+        with torch.no_grad(), self.fast_ctx:
+            for i in range(0, n_unobs, batch_size):
+                end = min(i + batch_size, n_unobs)
+                batch_indices = unobserved_indices[i:end]
+
+                io_start = time.time()
+                batch_embs_np = np.array([self.index.reconstruct(idx) for idx in batch_indices])
+                batch_embs = torch.from_numpy(batch_embs_np).float().to(self.device)
+                total_io_time += time.time() - io_start
+
+                gp_start = time.time()
+
+                if acq_func_name == 'ts':
+                    batch_max_score, batch_max_idx = self._ts_batch(model, batch_embs)
+
+                elif acq_func_name == 'ucb_const_beta':
+                    batch_max_score, batch_max_idx = self._ucb_batch(model, batch_embs)
+
+                elif acq_func_name == 'greedy':
+                    batch_max_score, batch_max_idx = self._greedy_batch(model, batch_embs)
+
+                elif acq_func_name == 'greedy_epsilon':
+                    batch_max_score, batch_max_idx = self._greedy_epsilon_batch(model, batch_embs)
+
+                elif acq_func_name == 'greedy_epsilon_ts':
+                    batch_max_score, batch_max_idx = self._greedy_epsilon_ts_batch(model, batch_embs)
+
+                elif acq_func_name == 'lse_straddle':
+                    batch_max_score, batch_max_idx = self._lse_straddle_batch(model, batch_embs)
+
+                elif acq_func_name == 'lse_margin':
+                    batch_max_score, batch_max_idx = self._lse_margin_batch(model, batch_embs)
+
+                else:
+                    raise ValueError(f"Unknown acquisition function: {acq_func_name}")
+
+                total_gp_time += time.time() - gp_start
+
+                if batch_max_score > best_score:
+                    best_score = batch_max_score
+                    best_idx_in_unobs = i + batch_max_idx
+
+                del batch_embs
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+        return best_idx_in_unobs, best_score, total_gp_time, total_io_time
+
+
+    def _get_mu_sigma_for_acq(self, model, batch_embs):
+        pred = model(batch_embs)
+
+        if self.gp_task_type == "binary_classification":
+            mu = pred.mean[1]
+            sigma = pred.stddev[1]
+            return mu, sigma, pred
+
+        elif self.gp_task_type == "variational_binary":
+            # latent GP — mean/std still exist in logit space
+            mu = pred.mean
+            sigma = pred.stddev
+            return mu, sigma, pred
+
+        else:
+            mu = pred.mean
+            sigma = pred.stddev
+            return mu, sigma, pred
+
+
+    def _ts_batch(self, model, batch_embs):
+        pred = model(batch_embs)
+        samples = pred.sample()
+
+        if self.gp_task_type == "binary_classification":
+            scores = samples[1]
+        else:
+            scores = samples
+
+        max_score, max_idx = torch.max(scores, dim=0)
+        return max_score.item(), max_idx.item()
+
+
+    def _ucb_batch(self, model, batch_embs):
+        beta = float(self.al_config['ucb_beta_const'])
+        sqrt_beta = math.sqrt(beta)
+
+        mu, sigma, _ = self._get_mu_sigma_for_acq(model, batch_embs)
+        scores = mu + sqrt_beta * sigma
+
+        max_score, max_idx = torch.max(scores, dim=0)
+        return max_score.item(), max_idx.item()
+
+
+    def _greedy_batch(self, model, batch_embs):
+        mu, _, _ = self._get_mu_sigma_for_acq(model, batch_embs)
+        max_score, max_idx = torch.max(mu, dim=0)
+        return max_score.item(), max_idx.item()
+
+
+    def _greedy_epsilon_batch(self, model, batch_embs):
+        epsilon = self.config.get('active_learning', {}).get('epsilon')
+
+        if torch.rand(1).item() > epsilon:
+            return self._greedy_batch(model, batch_embs)
+        else:
+            batch_size = batch_embs.size(0)
+            random_idx = torch.randint(0, batch_size, (1,)).item()
+            return float('-inf'), random_idx
+
+
+    def _greedy_epsilon_ts_batch(self, model, batch_embs):
+        epsilon = self.config.get('active_learning', {}).get('epsilon')
+
+        if torch.rand(1).item() > epsilon:
+            return self._greedy_batch(model, batch_embs)
+        else:
+            return self._ts_batch(model, batch_embs)
+
+
+    def _lse_straddle_batch(self, model, batch_embs):
+        tau = float(self.al_config.get("lse_tau"))
+        kappa = float(self.al_config.get("lse_kappa"))
+
+        mu, sigma, _ = self._get_mu_sigma_for_acq(model, batch_embs)
+        scores = -torch.abs(mu - tau) + kappa * sigma
+
+        max_score, max_idx = torch.max(scores, dim=0)
+        return max_score.item(), max_idx.item()
+
+
+    def _lse_margin_batch(self, model, batch_embs):
+        tau = float(self.al_config.get("lse_tau"))
+
+        mu, sigma, _ = self._get_mu_sigma_for_acq(model, batch_embs)
+        scores = -torch.abs(mu - tau) / (sigma + 1e-8)
+
+        max_score, max_idx = torch.max(scores, dim=0)
+        return max_score.item(), max_idx.item()
 
 
 # ================================================================
