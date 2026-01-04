@@ -85,7 +85,11 @@ class GPActiveLearner(BaseActiveLearner):
         # Task type: "regression" (original) or "binary_classification"
         self.gp_task_type = self.gp_config.get("task_type", "regression")
 
-        # Number of posterior samples when turning logits → probabilities
+        # Prior bias for relevant class in binary mode (logit space)
+        # 0.0 → neutral (≈0.5), negative → pessimistic
+        self.prior_bias_relevant = float(self.gp_config.get("prior_bias_relevant", 0.0))
+
+        # Number of posterior samples for probability estimation
         self.num_prob_samples = int(self.gp_config.get("num_prob_samples", 256))
 
         # Active learning ACQ config will be loaded in active_learn
@@ -98,7 +102,10 @@ class GPActiveLearner(BaseActiveLearner):
             self.logger.info("Using fast_pred_var")
 
         if self.gp_task_type == "binary_classification":
-            self.logger.info("GPActiveLearner running in BINARY CLASSIFICATION mode")
+            self.logger.info(
+                f"GPActiveLearner running in BINARY CLASSIFICATION mode "
+                f"(prior_bias_relevant={self.prior_bias_relevant})"
+            )
         else:
             self.logger.info("GPActiveLearner running in REGRESSION mode")
 
@@ -574,15 +581,25 @@ class GPActiveLearner(BaseActiveLearner):
             likelihood = DirichletClassificationLikelihood(labels, learn_additional_noise=True).to(self.device)
             transformed_targets = likelihood.transformed_targets  # regression targets
 
+            num_classes = likelihood.num_classes
+
             model = DirichletExactGPModel(
                 X_obs,
                 transformed_targets,
                 likelihood,
-                num_classes=likelihood.num_classes,  # should be 2
+                num_classes=num_classes,
                 lengthscale=lengthscale,
                 signal_noise=signal_noise,
                 ard=self.ard,
             ).to(self.device)
+
+            # ---- Set pessimistic prior for relevant class (class 1) ----
+            with torch.no_grad():
+                # default: all zeros (neutral)
+                bias = torch.zeros(num_classes, dtype=torch.float32, device=self.device)
+                if num_classes >= 2:
+                    bias[1] = self.prior_bias_relevant  # relevant class
+                model.mean_module.initialize(constant=bias)
 
             # For refitting, we pass transformed_targets as train_y (like the tutorial)
             self._maybe_refit_gp(state, model, likelihood, X_obs, transformed_targets)
