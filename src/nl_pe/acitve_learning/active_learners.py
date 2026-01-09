@@ -169,21 +169,26 @@ class GPActiveLearner(BaseActiveLearner):
             likelihood.eval()
 
         with torch.no_grad():
-            ls_t = model.covar_module.base_kernel.lengthscale.detach().cpu()
-            ls = float(ls_t.item()) if ls_t.numel() == 1 else ls_t.squeeze().tolist()
+            # Always store as lists (even if scalar)
+            ls = (
+                model.covar_module.base_kernel.lengthscale
+                .detach().cpu().reshape(-1).tolist()
+            )
 
-            sn = float(model.covar_module.outputscale.item())
+            sn = (
+                model.covar_module.outputscale
+                .detach().cpu().reshape(-1).tolist()
+            )
 
+            on = None
             if hasattr(likelihood, "noise"):
-                on = float(likelihood.noise.item())
-            elif hasattr(likelihood, "second_noise_covar"):
-                on = float(likelihood.second_noise_covar.noise.mean().item())
-            else:
-                on = float("nan")
+                on = likelihood.noise.detach().cpu().reshape(-1).tolist()
 
         state["lengthscale"].append(ls)
         state["signal_noise"].append(sn)
         state["obs_noise"].append(on)
+
+
 
     # ================================================================
     # VARIATIONAL TRAIN LOOP
