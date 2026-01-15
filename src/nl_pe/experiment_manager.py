@@ -96,6 +96,11 @@ class ExperimentManager():
         gp = GPInference(self.config)
         gp.run_inference()
 
+
+    def tune_gp(self):
+        
+
+
     def tune_gp_all_queries(self):
         #needs to be corrected -- it uses only on GP model for all queries, with y's sampled in batches for training from different queries
         """

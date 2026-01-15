@@ -176,6 +176,7 @@ class GPActiveLearner(BaseActiveLearner):
 
         # Initialize lists
         state["selected_doc_ids"] = []
+        state["observed_scores"] = []
         state["acquisition_scores"] = []
         state["acquisition_times"] = []
         state["acquisition_IO_times"] = []
@@ -234,6 +235,7 @@ class GPActiveLearner(BaseActiveLearner):
                     X_obs = torch.cat([X_obs, X_new], dim=0)
                     y_obs = torch.cat([y_obs, torch.tensor([y_new], dtype=torch.float32).to(self.device)], dim=0)
                     state["selected_doc_ids"].append(d_id)
+                    state["observed_scores"].append(float(y_new))
                     warm_added += 1
 
                 # Reduce the number of AL iterations by the number of warm-start observations
@@ -281,6 +283,7 @@ class GPActiveLearner(BaseActiveLearner):
 
             # Get label for selected doc
             y_new = self.get_single_rel_judgment(state, selected_doc_id)
+            state["observed_scores"].append(float(y_new))
             self.logger.debug(f"Retrieved relevance label {y_new} for document {selected_doc_id}")
 
             # Update observations
