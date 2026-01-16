@@ -99,6 +99,44 @@ class ExperimentManager():
 
     def tune_gp(self):
         
+        #if X train will be same for all queries, save factor of Q repeats of cholesky and switch to # https://docs.gpytorch.ai/en/v1.13/examples/03_Multitask_Exact_GPs/Batch_Independent_Multioutput_GP.html
+
+        self.logger.info(f"Starting gp tuning in {self.exp_dir}")
+        self.data_config = self.config.get('data', {})
+        #need doc_ids?
+        #doc_ids_path = self.data_config.get('doc_ids_path')
+        #with open(doc_ids_path, 'rb') as f:
+        #    doc_ids = pickle.load(f)
+
+        #Load queries
+        queries_csv_path = self.data_config.get("queries_csv_path")
+        qdf = pd.read_csv(queries_csv_path)
+        self.qids = qdf.iloc[:, 0].tolist()
+        self.logger.info(f"Loaded {len(self.qids)} training queries")
+
+        self.index_path = self.data_config.get('index_path')
+        #TODO: optimize to not read all vectors into CPU RAM? 
+        #index = faiss.read_index(index_path)
+
+        f_get_train_set = getattr(self, self.config.get("train_set_constr").get("constr_func"))
+        
+        #Y shape is QxK
+        #if x's different per query, X shape is QxKxD (queiries, points per query, dim), 
+        #if x's same for all queries, KxD, Y is QxK 
+
+        X, Y = f_get_train_set()
+        
+        self.logger.info(
+            "Constructed training set via %s: X=%s, Y=%s",
+            f_get_train_set,
+            X.shape if hasattr(X, "shape") else type(X),
+            Y.shape if hasattr(Y, "shape") else type(Y),
+        )
+
+        
+
+
+        #give flexibility for different kernels (regression)
 
 
     def tune_gp_all_queries(self):
