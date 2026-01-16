@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 import pandas as pd
 from nl_pe.utils.setup_logging import setup_logging
+from nl_pe.utils.gps import SharedKernelAndLikelihoodGPModel
 from nl_pe.embedding import EMBEDDER_CLASSES
 from nl_pe import search_agent
 import pickle
@@ -122,17 +123,36 @@ class ExperimentManager():
         
         #Y shape is QxK
         #if x's different per query, X shape is QxKxD (queiries, points per query, dim), 
-        #if x's same for all queries, KxD, Y is QxK 
+        #if x's same for all queries, KxD, Y is KXD 
 
+        #don't forget to add query(s) to data 
         X, Y = f_get_train_set()
-        
+        emb_dim = X.size(-1)
+
         self.logger.info(
             "Constructed training set via %s: X=%s, Y=%s",
             f_get_train_set,
             X.shape if hasattr(X, "shape") else type(X),
             Y.shape if hasattr(Y, "shape") else type(Y),
+            "embedding dim is: " , emb_dim
         )
 
+        #TODO, read functions for creating mean, kernel, likelihood dynamically from gp util helper class
+        shared_mean = gpytorch.means.ConstantMean()
+
+        #construct kernel
+        self.ard = self.config.get('optimization').get('ard')
+        if self.ard:
+            base_kernel = gpytorch.kernels.RBFKernel(ard_num_dims=emb_dim)
+        else:
+            base_kernel = gpytorch.kernels.RBFKernel()
+        shared_kernel = gpytorch.kernels.ScaleKernel(base_kernel)
+        shared_likelihood = gpytorch.likelihoods.GaussianLikelihood()
+
+
+        #create sub-model list
+
+        #create model and likelihoood wrappers
         
 
 
