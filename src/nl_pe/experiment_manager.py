@@ -99,59 +99,67 @@ class ExperimentManager():
 
 
     def tune_gp(self):
-        
-        #if X train will be same for all queries, save factor of Q repeats of cholesky and switch to # https://docs.gpytorch.ai/en/v1.13/examples/03_Multitask_Exact_GPs/Batch_Independent_Multioutput_GP.html
 
         self.logger.info(f"Starting gp tuning in {self.exp_dir}")
         self.data_config = self.config.get('data', {})
-        #need doc_ids?
-        #doc_ids_path = self.data_config.get('doc_ids_path')
-        #with open(doc_ids_path, 'rb') as f:
-        #    doc_ids = pickle.load(f)
 
-        #Load queries
+        # --------------------------------------------------
+        # Device setup
+        # --------------------------------------------------
+        device_cfg = self.config.get("device", "cpu")
+        device = torch.device("cuda" if device_cfg == "gpu" else "cpu")
+        self.logger.info(f"Using device: {device}")
+
+        # --------------------------------------------------
+        # Load queries
+        # --------------------------------------------------
         queries_csv_path = self.data_config.get("queries_csv_path")
         qdf = pd.read_csv(queries_csv_path)
         self.qids = qdf.iloc[:, 0].tolist()
         self.logger.info(f"Loaded {len(self.qids)} training queries")
 
-        self.index_path = self.data_config.get('index_path')
-        #TODO: optimize to not read all vectors into CPU RAM? 
-        #index = faiss.read_index(index_path)
-
-        #for now assume that each GP gets a different set of x_trains (try to refactor to a batched version if using whole dataset)
+        # --------------------------------------------------
+        # Construct training data
+        # --------------------------------------------------
         f_get_train_set = getattr(self, self.config.get("pretraining").get("constr_func"))
-        
-        #Y shape is QxK
-        #X shape is QxKxD (queiries, points per query, dim), 
 
-        #don't forget to add query(s) to data 
-        X, Y = f_get_train_set()
+        X, Y = f_get_train_set()          # X: QxKxD, Y: QxK
+        X = X.to(device)
+        Y = Y.to(device)
+
         self.Q, self.K, self.emb_dim = X.shape
 
         self.logger.info(
-            "Constructed training set via %s:",
+            "Constructed training set via %s (Q=%d, K=%d, D=%d)",
             f_get_train_set,
+            self.Q,
+            self.K,
+            self.emb_dim,
         )
 
-        #get shared mean, kernel function, likelihood function, model function
+        # --------------------------------------------------
+        # Shared GP components
+        # --------------------------------------------------
         f_get_mean = getattr(self, self.config.get("pretraining").get("mean_constr_func"))
         f_get_kernel = getattr(self, self.config.get("pretraining").get("kernel_constr_func"))
         f_get_likelihood = getattr(self, self.config.get("pretraining").get("likelihood_constr_func"))
         f_make_single_model = getattr(self, self.config.get("pretraining").get("single_model_constr_func"))
 
-        shared_mean = f_get_mean()
-        shared_kernel = f_get_kernel()
-        shared_likelihood = f_get_likelihood()
+        shared_mean = f_get_mean().to(device)
+        shared_kernel = f_get_kernel().to(device)
+        shared_likelihood = f_get_likelihood().to(device)
 
+        # --------------------------------------------------
+        # Build per-query GP submodels
+        # --------------------------------------------------
         self.logger.info(f"Creating {self.Q} GP submodels (K={self.K}, D={self.emb_dim})")
 
         models = []
         likelihoods = []
 
         for q in range(self.Q):
-            train_x_q = X[q]        # K x D
-            train_y_q = Y[q]        # K
+            train_x_q = X[q]   # K x D
+            train_y_q = Y[q]   # K
 
             model_q = f_make_single_model(
                 train_x_q,
@@ -159,34 +167,21 @@ class ExperimentManager():
                 shared_likelihood,
                 shared_kernel,
                 shared_mean,
-            )
+            ).to(device)
 
             models.append(model_q)
             likelihoods.append(shared_likelihood)
 
+        # --------------------------------------------------
         # Wrap models + likelihoods
-        model = gpytorch.models.IndependentModelList(*models)
-        likelihood = gpytorch.likelihoods.LikelihoodList(*likelihoods)
+        # --------------------------------------------------
+        model = gpytorch.models.IndependentModelList(*models).to(device)
+        likelihood = gpytorch.likelihoods.LikelihoodList(*likelihoods).to(device)
 
-        #create sub-model 
-#     model1 = ExactGPModel(
-#     train_x1, train_y1,
-#     shared_likelihood,
-#     shared_kernel,
-#     shared_mean,
-# )
+        self.model = model
+        self.likelihood = likelihood
 
-# model2 = ExactGPModel(
-#     train_x2, train_y2,
-#     shared_likelihood,
-#     shared_kernel,
-#     shared_mean,
-# )
-
-        #create model and likelihoood wrappers
-#         model = gpytorch.models.IndependentModelList(model1, model2)
-# likelihood = gpytorch.likelihoods.LikelihoodList(shared_likelihood, shared_likelihood)
-        
+            
     #helper methods for training
     def _get_zero_mean(self):
         return gpytorch.means.ZeroMean()
