@@ -8,7 +8,7 @@ from pathlib import Path
 import time
 import pandas as pd
 from nl_pe.utils.setup_logging import setup_logging
-from nl_pe.utils.gps import SharedKernelAndLikelihoodGPModel
+from nl_pe.utils.gps import * 
 from nl_pe.embedding import EMBEDDER_CLASSES
 from nl_pe import search_agent
 import pickle
@@ -119,44 +119,92 @@ class ExperimentManager():
         #TODO: optimize to not read all vectors into CPU RAM? 
         #index = faiss.read_index(index_path)
 
-        f_get_train_set = getattr(self, self.config.get("train_set_constr").get("constr_func"))
+        #for now assume that each GP gets a different set of x_trains (try to refactor to a batched version if using whole dataset)
+        f_get_train_set = getattr(self, self.config.get("pretraining").get("constr_func"))
         
         #Y shape is QxK
-        #if x's different per query, X shape is QxKxD (queiries, points per query, dim), 
-        #if x's same for all queries, KxD, Y is KXD 
+        #X shape is QxKxD (queiries, points per query, dim), 
 
         #don't forget to add query(s) to data 
         X, Y = f_get_train_set()
-        emb_dim = X.size(-1)
+        self.Q, self.K, self.emb_dim = X.shape
 
         self.logger.info(
-            "Constructed training set via %s: X=%s, Y=%s",
+            "Constructed training set via %s:",
             f_get_train_set,
-            X.shape if hasattr(X, "shape") else type(X),
-            Y.shape if hasattr(Y, "shape") else type(Y),
-            "embedding dim is: " , emb_dim
         )
 
-        #TODO, read functions for creating mean, kernel, likelihood dynamically from gp util helper class
-        shared_mean = gpytorch.means.ConstantMean()
+        #get shared mean, kernel function, likelihood function, model function
+        f_get_mean = getattr(self, self.config.get("pretraining").get("mean_constr_func"))
+        f_get_kernel = getattr(self, self.config.get("pretraining").get("kernel_constr_func"))
+        f_get_likelihood = getattr(self, self.config.get("pretraining").get("likelihood_constr_func"))
+        f_make_single_model = getattr(self, self.config.get("pretraining").get("single_model_constr_func"))
 
-        #construct kernel
-        self.ard = self.config.get('optimization').get('ard')
-        if self.ard:
-            base_kernel = gpytorch.kernels.RBFKernel(ard_num_dims=emb_dim)
-        else:
-            base_kernel = gpytorch.kernels.RBFKernel()
-        shared_kernel = gpytorch.kernels.ScaleKernel(base_kernel)
-        shared_likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        shared_mean = f_get_mean()
+        shared_kernel = f_get_kernel()
+        shared_likelihood = f_get_likelihood()
 
+        self.logger.info(f"Creating {self.Q} GP submodels (K={self.K}, D={self.emb_dim})")
 
-        #create sub-model list
+        models = []
+        likelihoods = []
+
+        for q in range(self.Q):
+            train_x_q = X[q]        # K x D
+            train_y_q = Y[q]        # K
+
+            model_q = f_make_single_model(
+                train_x_q,
+                train_y_q,
+                shared_likelihood,
+                shared_kernel,
+                shared_mean,
+            )
+
+            models.append(model_q)
+            likelihoods.append(shared_likelihood)
+
+        # Wrap models + likelihoods
+        model = gpytorch.models.IndependentModelList(*models)
+        likelihood = gpytorch.likelihoods.LikelihoodList(*likelihoods)
+
+        #create sub-model 
+#     model1 = ExactGPModel(
+#     train_x1, train_y1,
+#     shared_likelihood,
+#     shared_kernel,
+#     shared_mean,
+# )
+
+# model2 = ExactGPModel(
+#     train_x2, train_y2,
+#     shared_likelihood,
+#     shared_kernel,
+#     shared_mean,
+# )
 
         #create model and likelihoood wrappers
+#         model = gpytorch.models.IndependentModelList(model1, model2)
+# likelihood = gpytorch.likelihoods.LikelihoodList(shared_likelihood, shared_likelihood)
         
+    #helper methods for training
+    def _get_zero_mean(self):
+        return gpytorch.means.ZeroMean()
+    
+    def _get_rbf_kernel(self):
+        self.ard = self.config.get('optimization').get('ard')
+        if self.ard:
+            base_kernel = gpytorch.kernels.RBFKernel(ard_num_dims=self.emb_dim)
+        else:
+            base_kernel = gpytorch.kernels.RBFKernel()
+        return gpytorch.kernels.ScaleKernel(base_kernel)
+    
+    def _get_gaussian_likelihood(self):
+        return gpytorch.likelihoods.GaussianLikelihood()
+    
+    def _make_SharedKernelAndLikelihoodGPModel(self, train_x, train_y, likelihood, covar_module, mean_module):
+        return SharedKernelAndLikelihoodGPModel(train_x, train_y, likelihood, covar_module, mean_module)
 
-
-        #give flexibility for different kernels (regression)
 
 
     def tune_gp_all_queries(self):
@@ -488,9 +536,6 @@ class ExperimentManager():
                 )
                 break
 
-
-
-        #Todo later, embed the query
 
     def write_query_result(self, qid, result):
         """

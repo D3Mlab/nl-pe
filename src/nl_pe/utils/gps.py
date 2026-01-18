@@ -11,3 +11,6 @@ class SharedKernelAndLikelihoodGPModel(gpytorch.models.ExactGP):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+    
+def getZeroMean():
+    return gpytorch.means.ZeroMean()
