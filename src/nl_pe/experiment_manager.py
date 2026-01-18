@@ -179,7 +179,24 @@ class ExperimentManager():
         # --------------------------------------------------
         model = gpytorch.models.IndependentModelList(*models).to(device)
         likelihood = gpytorch.likelihoods.LikelihoodList(*likelihoods).to(device)
+
+        # --------------------------------------------------
+        # Optimize
+        # --------------------------------------------------
+        lr = self.config.get('optimization').get('lr')
+        train_iters = self.config.get('optimization').get('train_iters')
+        
+        #whether to optimizer observation and signal noise 
+        opt_noise = bool(self.config.get('optimization').get('opt_noise'))
+        opt_sig_noise = bool(self.config.get('optimization').get('opt_sig_noise'))
+
+        model.train()
+        likelihood.train()
+
+
        
+
+
     #helper methods for training
     def _get_zero_mean(self):
         return gpytorch.means.ZeroMean()
