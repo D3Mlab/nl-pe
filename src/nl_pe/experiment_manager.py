@@ -16,6 +16,7 @@ import torch
 import faiss
 import gpytorch
 from gpytorch.constraints import GreaterThan
+import math
 
 class ExperimentManager():
 
@@ -110,18 +111,19 @@ class ExperimentManager():
         device = torch.device("cuda" if device_cfg == "gpu" else "cpu")
         self.logger.info(f"Using device: {device}")
 
+        #Move to data construction
         # --------------------------------------------------
         # Load queries
         # --------------------------------------------------
-        queries_csv_path = self.data_config.get("queries_csv_path")
-        qdf = pd.read_csv(queries_csv_path)
-        self.qids = qdf.iloc[:, 0].tolist()
-        self.logger.info(f"Loaded {len(self.qids)} training queries")
+        # queries_csv_path = self.data_config.get("queries_csv_path")
+        # qdf = pd.read_csv(queries_csv_path)
+        # self.qids = qdf.iloc[:, 0].tolist()
+        # self.logger.info(f"Loaded {len(self.qids)} training queries")
 
         # --------------------------------------------------
         # Construct training data
         # --------------------------------------------------
-        f_get_train_set = getattr(self, self.config.get("pretraining").get("constr_func"))
+        f_get_train_set = getattr(self, self.config.get("pretraining").get("data_constr_func"))
 
         X, Y = f_get_train_set()          # X: QxKxD, Y: QxK
         X = X.to(device)
@@ -177,11 +179,7 @@ class ExperimentManager():
         # --------------------------------------------------
         model = gpytorch.models.IndependentModelList(*models).to(device)
         likelihood = gpytorch.likelihoods.LikelihoodList(*likelihoods).to(device)
-
-        self.model = model
-        self.likelihood = likelihood
-
-            
+       
     #helper methods for training
     def _get_zero_mean(self):
         return gpytorch.means.ZeroMean()
@@ -199,6 +197,26 @@ class ExperimentManager():
     
     def _make_SharedKernelAndLikelihoodGPModel(self, train_x, train_y, likelihood, covar_module, mean_module):
         return SharedKernelAndLikelihoodGPModel(train_x, train_y, likelihood, covar_module, mean_module)
+    
+    #for testing
+    def _dummy_data_constr(self):
+        # two queries, 25 points each, 2D inputs
+        train_x1_1d = torch.linspace(0, 0.95, 25) + 0.05 * torch.rand(25)
+        train_x2_1d = torch.linspace(0, 0.95, 25) + 0.05 * torch.rand(25)
+
+        # make inputs 2D: (x, x^2) just as a simple example
+        train_x1 = torch.stack([train_x1_1d, train_x1_1d ** 2], dim=-1)  # 25 x 2
+        train_x2 = torch.stack([train_x2_1d, train_x2_1d ** 2], dim=-1)  # 25 x 2
+
+        train_y1 = torch.sin(train_x1_1d * (2 * math.pi)) + 0.2 * torch.randn_like(train_x1_1d)
+        train_y2 = torch.cos(train_x2_1d * (2 * math.pi)) + 0.2 * torch.randn_like(train_x2_1d)
+
+        # stack into Q x K x D and Q x K
+        X = torch.stack([train_x1, train_x2], dim=0)  # 2 x 25 x 2
+        Y = torch.stack([train_y1, train_y2], dim=0)  # 2 x 25
+
+        return X, Y
+
 
 
 
