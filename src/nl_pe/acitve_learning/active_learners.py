@@ -180,7 +180,7 @@ class GPActiveLearner(BaseActiveLearner):
         state["observed_scores"] = []
         state["acquisition_scores"] = []
         state["acquisition_times"] = []
-        #state["acquisition_IO_times"] = []
+        state["acquisition_IO_times"] = []
         state["model_update_times"] = []
         state["neg_mll"] = []
         state["lengthscale"] = []
@@ -280,7 +280,7 @@ class GPActiveLearner(BaseActiveLearner):
             state["selected_doc_ids"].append(selected_doc_id)
             state["acquisition_scores"].append(acq_score)
             state["acquisition_times"].append(acq_gp_time)
-            #state["acquisition_IO_times"].append(acq_io_time)
+            state["acquisition_IO_times"].append(acq_io_time)
 
             # Get label for selected doc
             y_new = self.get_single_rel_judgment(state, selected_doc_id)
