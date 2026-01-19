@@ -18,6 +18,7 @@ import gpytorch
 from gpytorch.constraints import GreaterThan
 from gpytorch.mlls import SumMarginalLogLikelihood
 import math
+import csv
 
 class ExperimentManager():
 
@@ -189,9 +190,10 @@ class ExperimentManager():
         lr = self.config.get('optimization').get('lr')
         
         #can use the first models params only since they are shared
+        m0 = model.models[0]
         params = []
         #always include lengthscale(multiple for ard)
-        ls_param = model.models[0].covar_module.base_kernel.raw_lengthscale
+        ls_param = m0.covar_module.base_kernel.raw_lengthscale
         params.append(ls_param)
         self.logger.info(
             "Optimizing lengthscale(s): raw_lengthscale, shape=%s",
@@ -201,51 +203,72 @@ class ExperimentManager():
         # outputscale
         opt_sig_noise = self.config.get('optimization').get('opt_sig_noise')
         if opt_sig_noise:
-            os_param = model.models[0].covar_module.raw_outputscale
+            os_param = m0.covar_module.raw_outputscale
             params.append(os_param)
             self.logger.info("Optimizing outputscale: raw_outputscale")
         else:
-            self.logger.info("NOT optimizing outputscale")
+            m0.covar_module.outputscale = 1.0
+            self.logger.info("NOT optimizing outputscale (fixed to 1.0)")
 
         # noise
         opt_noise = self.config.get('optimization').get('opt_noise')
         if opt_noise:
-            noise_param = model.models[0].likelihood.raw_noise
+            noise_param = m0.likelihood.raw_noise
             params.append(noise_param)
             self.logger.info("Optimizing noise: raw_noise")
         else:
-            self.logger.info("NOT optimizing noise")
+            m0.likelihood.noise = 1.0
+            self.logger.info("NOT optimizing noise (fixed to 1.0)")
 
         optimizer = torch.optim.Adam(params, lr=lr)
 
-        train_iters = self.config.get('optimization').get('train_iters')
+        #--------------------------
+        #Output log setup
+        #--------------------------
+        train_log_path = os.path.join(self.config["exp_dir"], "training_log.csv")
 
+        header = ["neg_mll", "sig_noise", "obs_noise"]
+
+        if self.ard:
+            for d in range(ls_param.numel()):
+                header.append(f"lengthscale_{d}")
+        else:
+            header.append("lengthscale")
+
+        with open(train_log_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(header)
+
+        #--------------------------
+        #Train Loop
+        #--------------------------
         model.train()
         likelihood.train()
+
+        train_iters = self.config.get('optimization').get('train_iters')
 
         for i in range(train_iters):
             optimizer.zero_grad()
             output = model(*model.train_inputs)
             loss = -mll(output, model.train_targets)
+
+            self._log_training(
+                i=i,
+                loss=loss,
+                model=model,
+                train_log_path=train_log_path,
+            )
+
             loss.backward()
             optimizer.step()
-
-            if (i + 1) % 10 == 0:
-                print(f"Iter {i+1}/{train_iters} - Loss: {loss.item():.3f}")
-
-        # -----------------------------
-        # Parameter inspection
-        # -----------------------------
-        print("\n=== Parameter values per GP ===")
-
-        for i, m in enumerate(model.models):
-            print(f"\nGP {i}")
-            ls = m.covar_module.base_kernel.lengthscale.detach().cpu().squeeze()
-            print("  lengthscale :", ls.tolist())
-            print("  outputscale :", m.covar_module.outputscale.item())
-            print("  noise       :", m.likelihood.noise.item())
-
-       
+          
+        #log final param vals
+        self._log_training(
+            i=train_iters,
+            loss=loss,
+            model=model,
+            train_log_path=train_log_path,
+        )
 
 
     #helper methods for training
@@ -268,6 +291,7 @@ class ExperimentManager():
     
     #for testing
     def _dummy_data_constr(self):
+        torch.manual_seed(42)
         # two queries, 25 points each, 2D inputs
         train_x1_1d = torch.linspace(0, 0.95, 25) + 0.05 * torch.rand(25)
         train_x2_1d = torch.linspace(0, 0.95, 25) + 0.05 * torch.rand(25)
@@ -284,8 +308,6 @@ class ExperimentManager():
         Y = torch.stack([train_y1, train_y2], dim=0)  # 2 x 25
 
         return X, Y
-
-
 
 
     def tune_gp_all_queries(self):
@@ -644,7 +666,6 @@ class ExperimentManager():
         with open(trec_file_path, "w") as trec_file:
             trec_file.write("\n".join(trec_results))
 
-
     def load_config(self):
         config_path = os.path.join(self.exp_dir, "config.yaml")
         with open(config_path, "r") as config_file:
@@ -653,12 +674,56 @@ class ExperimentManager():
     def setup_logger(self):
         self.logger = setup_logging(self.__class__.__name__, self.config, output_file=os.path.join(self.exp_dir, "experiment.log"))
 
+    #helper to log training   
+    def _log_training(
+        self,
+        *,
+        i,
+        loss,
+        model,
+        train_log_path,
+    ):
+        m0 = model.models[0]
+
+        neg_mll = loss.item()
+        sig_noise = m0.covar_module.outputscale.item()
+        obs_noise = m0.likelihood.noise.item()
+
+        ls_vals = (
+            m0.covar_module.base_kernel.lengthscale
+            .detach()
+            .cpu()
+            .view(-1)
+            .tolist()
+        )
+
+        # --- CSV ---
+        row = [neg_mll, sig_noise, obs_noise] + ls_vals
+        with open(train_log_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(row)
+
+        # --- logger ---
+        ls_str = ", ".join(
+            f"ls[{d}]={v:.4f}" for d, v in enumerate(ls_vals)
+        )
+
+        self.logger.info(
+            "iter=%d | neg_mll=%.4f | sig_noise=%.4f | obs_noise=%.4f | %s",
+            i,
+            neg_mll,
+            sig_noise,
+            obs_noise,
+            ls_str,
+        )
+
     def run_experiment(self, exp_type):
         # Call the method dynamically
         if not hasattr(self, exp_type):
             raise ValueError(f"Experiment type '{exp_type}' is not defined in ExperimentManager.")
         method = getattr(self, exp_type)
         method()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run experiments in the specified directory.")
@@ -674,3 +739,4 @@ if __name__ == "__main__":
     else:
         manager = ExperimentManager(args.exp_dir)
         manager.run_experiment(args.exp_type)
+
