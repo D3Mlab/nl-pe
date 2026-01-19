@@ -16,6 +16,7 @@ import torch
 import faiss
 import gpytorch
 from gpytorch.constraints import GreaterThan
+from gpytorch.mlls import SumMarginalLogLikelihood
 import math
 
 class ExperimentManager():
@@ -175,24 +176,74 @@ class ExperimentManager():
             likelihoods.append(shared_likelihood)
 
         # --------------------------------------------------
-        # Wrap models + likelihoods
+        # Wrap models + likelihoods, def loss
         # --------------------------------------------------
         model = gpytorch.models.IndependentModelList(*models).to(device)
         likelihood = gpytorch.likelihoods.LikelihoodList(*likelihoods).to(device)
 
+        mll = SumMarginalLogLikelihood(likelihood, model)
+
         # --------------------------------------------------
-        # Optimize
+        # Optimizer parameters
         # --------------------------------------------------
         lr = self.config.get('optimization').get('lr')
-        train_iters = self.config.get('optimization').get('train_iters')
         
-        #whether to optimizer observation and signal noise 
-        opt_noise = bool(self.config.get('optimization').get('opt_noise'))
-        opt_sig_noise = bool(self.config.get('optimization').get('opt_sig_noise'))
+        #can use the first models params only since they are shared
+        params = []
+        #always include lengthscale(multiple for ard)
+        ls_param = model.models[0].covar_module.base_kernel.raw_lengthscale
+        params.append(ls_param)
+        self.logger.info(
+            "Optimizing lengthscale(s): raw_lengthscale, shape=%s",
+            tuple(ls_param.shape),
+        )
+
+        # outputscale
+        opt_sig_noise = self.config.get('optimization').get('opt_sig_noise')
+        if opt_sig_noise:
+            os_param = model.models[0].covar_module.raw_outputscale
+            params.append(os_param)
+            self.logger.info("Optimizing outputscale: raw_outputscale")
+        else:
+            self.logger.info("NOT optimizing outputscale")
+
+        # noise
+        opt_noise = self.config.get('optimization').get('opt_noise')
+        if opt_noise:
+            noise_param = model.models[0].likelihood.raw_noise
+            params.append(noise_param)
+            self.logger.info("Optimizing noise: raw_noise")
+        else:
+            self.logger.info("NOT optimizing noise")
+
+        optimizer = torch.optim.Adam(params, lr=lr)
+
+        train_iters = self.config.get('optimization').get('train_iters')
 
         model.train()
         likelihood.train()
 
+        for i in range(train_iters):
+            optimizer.zero_grad()
+            output = model(*model.train_inputs)
+            loss = -mll(output, model.train_targets)
+            loss.backward()
+            optimizer.step()
+
+            if (i + 1) % 10 == 0:
+                print(f"Iter {i+1}/{train_iters} - Loss: {loss.item():.3f}")
+
+        # -----------------------------
+        # Parameter inspection
+        # -----------------------------
+        print("\n=== Parameter values per GP ===")
+
+        for i, m in enumerate(model.models):
+            print(f"\nGP {i}")
+            ls = m.covar_module.base_kernel.lengthscale.detach().cpu().squeeze()
+            print("  lengthscale :", ls.tolist())
+            print("  outputscale :", m.covar_module.outputscale.item())
+            print("  noise       :", m.likelihood.noise.item())
 
        
 
