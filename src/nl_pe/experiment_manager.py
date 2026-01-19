@@ -19,6 +19,7 @@ from gpytorch.constraints import GreaterThan
 from gpytorch.mlls import SumMarginalLogLikelihood
 import math
 import csv
+import pytrec_eval
 
 class ExperimentManager():
 
@@ -112,15 +113,6 @@ class ExperimentManager():
         device_cfg = self.config.get("device", "cpu")
         device = torch.device("cuda" if device_cfg == "gpu" else "cpu")
         self.logger.info(f"Using device: {device}")
-
-        #Move to data construction
-        # --------------------------------------------------
-        # Load queries
-        # --------------------------------------------------
-        # queries_csv_path = self.data_config.get("queries_csv_path")
-        # qdf = pd.read_csv(queries_csv_path)
-        # self.qids = qdf.iloc[:, 0].tolist()
-        # self.logger.info(f"Loaded {len(self.qids)} training queries")
 
         # --------------------------------------------------
         # Construct training data
@@ -270,6 +262,89 @@ class ExperimentManager():
             train_log_path=train_log_path,
         )
 
+    #helper for getting query, doc embeddings and gt labels
+    def _get_train_data_indep_modellist(self):
+        # --------------------------------------------------
+        # Load queries, q embeddings, doc embeddings
+        # --------------------------------------------------
+        #load qids
+        queries_csv_path = self.data_config.get("queries_csv_path")
+        qdf = pd.read_csv(queries_csv_path)
+        self.qids = qdf.iloc[:, 0].tolist()
+        self.logger.info(f"Loaded {len(self.qids)} training queries")
+
+        #load query embeddings to tensor
+        q_index_path = self.config.get('data').get('q_index_path')
+        #faiss index to cpu 
+        q_index = faiss.read_index(q_index_path)
+        q_embs_np = q_index.reconstruct_n(0, q_index.ntotal)
+        del q_index
+        q_embs = torch.from_numpy(q_embs_np).float() # shape: (Q, D)
+        del q_embs_np   
+        self.logger.info(f'loaded query embeddings with shape {q_embs.shape}')
+
+        #load doc embeddings to tensor
+        index_path = self.config.get('data').get('index_path')
+        index = faiss.read_index(index_path)
+        d_embs_np = index.reconstruct_n(0, index.ntotal) 
+        del index 
+        d_embs = torch.from_numpy(d_embs_np).float()   #shape: (N, D)
+        del d_embs_np        
+        self.logger.info(f'loaded doc embeddings with shape {d_embs.shape}')
+        #load doc_ids
+        doc_ids_path = self.config.get('data').get('doc_ids_path')
+        self.doc_ids = pickle.load(open(doc_ids_path, 'rb'))
+
+        #whether to include the query embedding in training
+        omit_q = bool(self.config.get('pretraining').get('omit_q'))
+
+        #set dimensions for X,Y
+        Q = len(self.qids)
+        D = d_embs.shape[-1]
+        if not omit_q:
+            K = d_embs.shape[0] + 1 #+1 for query
+        else:
+            K = d_embs.shape[0]
+            self.logger.warning("OMITING QUERY EMBEDDING/LABEL")
+
+        #set query relevance label:
+        self.q_rel_label = float(self.config.get('gp').get('query_rel_label'))
+
+        X = torch.zeros((Q,K,D))
+        Y = torch.zeros((Q, K))
+
+        self.logger.info(f"initialized X with shape (zeros) {X.shape} and Y with (zeros) {Y.shape}")
+
+        #whether to use all docs
+        self.use_all_docs = self.config.get('pretraining').get('use_all_docs')
+
+        #load qrels
+        qrels_path = self.config.get('data').get('qrels_path')
+        with open(qrels_path, "r") as qrels_file:
+            self.qrels = pytrec_eval.parse_qrel(qrels_file)
+
+        for q_idx, qid in enumerate(self.qids):
+            curr_q_qrels = self.qrels.get(str(qid), {})
+            if self.use_all_docs:
+                doc_labels = [curr_q_qrels.get(doc_id,0) for doc_id in self.doc_ids]
+                # fill Y[0:K] with doc relevance labels
+                Y[q_idx, :len(doc_labels)] = torch.tensor(doc_labels, dtype=torch.float32)
+                # fill X[q] with document embeddings
+                X[q_idx, :d_embs.shape[0], :] = d_embs
+
+            #skip this block for now
+            #else (not use all):
+                #get all relevant
+                #get top K
+                #get K_rand random negs 
+            
+            if not omit_q:
+                # fill query embedding
+                X[q_idx, -1, :] = q_embs[q_idx]
+                # fill query relevance label
+                Y[q_idx, -1] = self.q_rel_label
+
+        return X,Y
 
     #helper methods for training
     def _get_zero_mean(self):
