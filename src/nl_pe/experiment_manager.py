@@ -88,7 +88,7 @@ class ExperimentManager():
 
                 if result['top_k_psgs']:
                     self.logger.info('Rank successful')
-                    self.write_query_result(qid, result)
+                    self.write_query_result_ir(qid, result)
                 else:
                     self.logger.error(f'Failed to rank query {qid} -- empty result[\'top_k_psgs\']')
 
@@ -104,6 +104,8 @@ class ExperimentManager():
     def tune_indep_gps(self):
         self.logger.info(f"Starting independent gp tuning in {self.exp_dir}")
         self.data_config = self.config.get('data', {})
+        self.results_dir = Path(self.exp_dir) / 'per_query_results'
+        self.results_dir.mkdir(exist_ok=True)
 
         # --------------------------------------------------
         # Device setup
@@ -151,6 +153,8 @@ class ExperimentManager():
         #noise defaults, curr only used if not optimized
         self.signal_noise = float(self.config.get('gp').get('signal_noise') or 0)
         self.obs_noise = float(self.config.get('gp').get('observation_noise') or 0)
+        train_iters = self.config.get('optimization').get('train_iters')
+
 
         # --------------------------------------------------
         # Per q: build data, model, train, log
@@ -168,10 +172,23 @@ class ExperimentManager():
             mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
             optimizer = self._build_gp_optimizer(model, lr)
 
+            #start logging
+            query_result_dir = self.results_dir / f"{qid}"
+            query_result_dir.mkdir(exist_ok=True)
+            train_log_path = query_result_dir / "training_log.csv"
+            self._start_train_log(train_log_path)
 
-            #train
-            #write to subdir
+            for i in range(train_iters):
+                optimizer.zero_grad()
+                output = model(X)
+                loss = -mll(output, y)
 
+                self._log_training(i=i, loss=loss, model=model, train_log_path=train_log_path,)
+
+                loss.backward()
+                optimizer.step()
+
+            self._log_training(i=i, loss=loss, model=model, train_log_path=train_log_path,)
 
     def tune_gp_list(self):
 
@@ -258,18 +275,7 @@ class ExperimentManager():
         #Output log setup
         #--------------------------
         train_log_path = os.path.join(self.config["exp_dir"], "training_log.csv")
-
-        header = ["neg_mll", "sig_noise", "obs_noise"]
-
-        if self.ard:
-            for d in range(self.ls_param.numel()):
-                header.append(f"lengthscale_{d}")
-        else:
-            header.append("lengthscale")
-
-        with open(train_log_path, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(header)
+        self._start_train_log(train_log_path)
 
         #--------------------------
         #Train Loop
@@ -284,23 +290,13 @@ class ExperimentManager():
             output = model(*model.train_inputs)
             loss = -mll(output, model.train_targets)
 
-            self._log_training(
-                i=i,
-                loss=loss,
-                model=model,
-                train_log_path=train_log_path,
-            )
+            self._log_training(i=i, loss=loss, model=model.models[0], train_log_path=train_log_path,)
 
             loss.backward()
             optimizer.step()
           
         #log final param vals
-        self._log_training(
-            i=train_iters,
-            loss=loss,
-            model=model,
-            train_log_path=train_log_path,
-        )
+        self._log_training(i=train_iters,loss=loss, model=model, train_log_path=train_log_path,)
 
     def _build_gp_optimizer(self, model, lr):
         """
@@ -314,7 +310,7 @@ class ExperimentManager():
         # --------------------------------------------------
         self.ls_param = model.covar_module.base_kernel.raw_lengthscale
         params.append(self.ls_param)
-        self.logger.info("Optimizing lengthscale(s): raw_lengthscale, shape=%s", tuple(ls_param.shape),)
+        self.logger.info("Optimizing lengthscale(s): raw_lengthscale, shape=%s", tuple(self.ls_param.shape),)
 
         # --------------------------------------------------
         # Outputscale (signal variance)
@@ -343,7 +339,6 @@ class ExperimentManager():
             )
 
         return torch.optim.Adam(params, lr=lr)
-
 
     #helper for getting query, doc embeddings and gt labels
     def _get_train_data_indep_modellist(self):
@@ -453,6 +448,21 @@ class ExperimentManager():
         q_embs = torch.from_numpy(q_embs_np).float() # shape: (Q, D)
         self.logger.info(f'loaded query embeddings with shape {q_embs.shape}')
         return qids, q_embs
+
+    def _start_train_log(self, path):
+        header = ["neg_mll", "sig_noise", "obs_noise"]
+
+        if self.ard:
+            for d in range(self.ls_param.numel()):
+                header.append(f"lengthscale_{d}")
+        else:
+            header.append("lengthscale")
+
+        with open(path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(header)
+
+    #def _append_train_log_row(self, )
 
     #helper methods for training
     def _get_zero_mean(self):
@@ -823,7 +833,7 @@ class ExperimentManager():
                 break
 
 
-    def write_query_result(self, qid, result):
+    def write_query_result_ir(self, qid, result):
         """
         Write two files: 
         1) TREC run file : trec_results_raw.txt (may have duplicates from LLM reranking)
@@ -866,14 +876,12 @@ class ExperimentManager():
         model,
         train_log_path,
     ):
-        m0 = model.models[0]
-
         neg_mll = loss.item()
-        sig_noise = m0.covar_module.outputscale.item()
-        obs_noise = m0.likelihood.noise.item()
+        sig_noise = model.covar_module.outputscale.item()
+        obs_noise = model.likelihood.noise.item()
 
         ls_vals = (
-            m0.covar_module.base_kernel.lengthscale
+            model.covar_module.base_kernel.lengthscale
             .detach()
             .cpu()
             .view(-1)
