@@ -262,7 +262,7 @@ class ExperimentManager():
         header = ["neg_mll", "sig_noise", "obs_noise"]
 
         if self.ard:
-            for d in range(ls_param.numel()):
+            for d in range(self.ls_param.numel()):
                 header.append(f"lengthscale_{d}")
         else:
             header.append("lengthscale")
@@ -312,8 +312,8 @@ class ExperimentManager():
         # --------------------------------------------------
         # Lengthscale(s) — always optimized
         # --------------------------------------------------
-        ls_param = model.covar_module.base_kernel.raw_lengthscale
-        params.append(ls_param)
+        self.ls_param = model.covar_module.base_kernel.raw_lengthscale
+        params.append(self.ls_param)
         self.logger.info("Optimizing lengthscale(s): raw_lengthscale, shape=%s", tuple(ls_param.shape),)
 
         # --------------------------------------------------
