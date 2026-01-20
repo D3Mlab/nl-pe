@@ -123,21 +123,22 @@ class ExperimentManager():
         with open(qrels_path, "r") as qrels_file:
             self.qrels = pytrec_eval.parse_qrel(qrels_file)
 
-        #get data construction function
-        f_get_train_set = getattr(self, self.config.get("pretraining").get("data_constr_func"))
+        #whether to use all docs
+        self.use_all_docs = self.config.get('pretraining').get('use_all_docs')
+
+        #whether to include the query embedding in training
+        omit_q = bool(self.config.get('pretraining').get('omit_q'))
 
         #for each query:
         for self.curr_q_idx, self.curr_qid in enumerate(self.qids):
             #build X and Y
-            X,y = f_get_train_set() #X: KxD, y: K
+            X,y = _get_q_train_data() #X: KxD, y: K
 
 
             #build model
             #train
             #write to subdir
 
-    def get_q_train_data(self):
-        pass
 
     def tune_gp(self):
 
@@ -311,56 +312,77 @@ class ExperimentManager():
         self.doc_ids, self.d_embs = self._get_dids_and_embs()
 
         #whether to include the query embedding in training
-        omit_q = bool(self.config.get('pretraining').get('omit_q'))
-
-        #set dimensions for X,Y
-        Q = len(self.qids)
-        D = self.d_embs.shape[-1]
-        if not omit_q:
-            K = self.d_embs.shape[0] + 1 #+1 for query
-        else:
-            K = self.d_embs.shape[0]
+        self.omit_q = bool(self.config.get('pretraining').get('omit_q'))
+        if self.omit_q:
             self.logger.warning("OMITING QUERY EMBEDDING/LABEL")
-
-        #set query relevance label:
-        self.q_rel_label = float(self.config.get('gp').get('query_rel_label'))
-
-        X = torch.zeros((Q,K,D))
-        Y = torch.zeros((Q, K))
-
-        self.logger.info(f"initialized X with shape (zeros) {X.shape} and Y with (zeros) {Y.shape}")
 
         #whether to use all docs
         self.use_all_docs = self.config.get('pretraining').get('use_all_docs')
 
-        #load qrels
+        #set query relevance label:
+        self.q_rel_label = float(self.config.get('gp').get('query_rel_label'))
+
         qrels_path = self.config.get('data').get('qrels_path')
-        with open(qrels_path, "r") as qrels_file:
-            self.qrels = pytrec_eval.parse_qrel(qrels_file)
+        with open(qrels_path, "r") as f:
+            self.qrels = pytrec_eval.parse_qrel(f)
+
+        # --------------------------------------------------
+        # Build per-query tensors and stack
+        # --------------------------------------------------
+        X_list, Y_list = [], []
 
         for q_idx, qid in enumerate(self.qids):
-            curr_q_qrels = self.qrels.get(str(qid), {})
-            if self.use_all_docs:
-                doc_labels = [curr_q_qrels.get(doc_id,0) for doc_id in self.doc_ids]
-                # fill Y[0:K] with doc relevance labels
-                Y[q_idx, :len(doc_labels)] = torch.tensor(doc_labels, dtype=torch.float32)
-                # fill X[q] with document embeddings
-                X[q_idx, :self.d_embs.shape[0], :] = self.d_embs
+            X_q, y_q = self._get_q_train_data(q_idx, qid)
+            X_list.append(X_q)
+            Y_list.append(y_q)
 
-            #skip this block for now
-            #else (not use all):
-                #get all relevant
-                #get top K
-                #get K_rand random negs 
-            
-            if not omit_q:
-                # fill query embedding
-                X[q_idx, -1, :] = self.q_embs[q_idx]
-                # fill query relevance label
-                Y[q_idx, -1] = self.q_rel_label
+        X = torch.stack(X_list, dim=0)
+        Y = torch.stack(Y_list, dim=0)
 
-        return X,Y
-    
+        self.logger.info(f"final X shape {X.shape}, Y shape {Y.shape}")
+
+        return X, Y    
+
+    def _get_q_train_data(self, q_idx, qid):
+        """
+        Returns:
+            X_q : (K, D)
+            y_q : (K,)
+        """
+        # --------------------------------------------------
+        # Documents
+        # --------------------------------------------------
+        curr_q_qrels = self.qrels.get(str(qid), {})
+
+        if self.use_all_docs:
+            # doc embeddings
+            X_docs = self.d_embs
+
+            # doc relevance labels
+            doc_labels = [
+                curr_q_qrels.get(doc_id, 0) for doc_id in self.doc_ids
+            ]
+            y_docs = torch.tensor(doc_labels, dtype=torch.float32)
+
+        else:
+            # placeholder for future logic
+            raise NotImplementedError("use_all_docs=False not implemented yet")
+
+        # --------------------------------------------------
+        # Optional query entry
+        # --------------------------------------------------
+        if not self.omit_q:
+            X_q_emb = self.q_embs[q_idx].unsqueeze(0)  # (1, D)
+            y_q_rel = torch.tensor([self.q_rel_label], dtype=torch.float32)
+
+            X_q = torch.cat([X_docs, X_q_emb], dim=0)
+            y_q = torch.cat([y_docs, y_q_rel], dim=0)
+        else:
+            X_q = X_docs
+            y_q = y_docs
+
+        return X_q, y_q
+
     def _get_dids_and_embs(self):
         #load doc embeddings to tensor
         index_path = self.config.get('data').get('index_path')
