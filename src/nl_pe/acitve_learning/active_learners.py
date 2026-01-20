@@ -9,6 +9,7 @@ import faiss
 import numpy as np
 import math
 import time
+import pandas as pd
 
 class BaseActiveLearner(ABC):
 
@@ -163,6 +164,38 @@ class GPActiveLearner(BaseActiveLearner):
         observation_noise = self.gp_config.get('observation_noise')
         query_rel_label = self.gp_config.get('query_rel_label')
         k_final = int(self.gp_config.get('k_final'))
+        #optimization
+        self.ard = self.opt_config.get('ard')
+
+        #overwrite hyperparams if reading from csv
+        hypers_csv = self.gp_config.get("set_hypers_csv")
+        if hypers_csv is not None:
+            df = pd.read_csv(hypers_csv)
+            last_row = df.iloc[-1]
+
+            # force ARD
+            self.ard = True
+
+            # extract lengthscales (ordered by suffix)
+            ls_cols = sorted(
+                [c for c in df.columns if c.startswith("lengthscale_")],
+                key=lambda x: int(x.split("_")[-1])
+            )
+            lengthscale = torch.tensor(
+                [last_row[c] for c in ls_cols],
+                dtype=torch.float32,
+            ).unsqueeze(0)   # shape: (1, D)
+
+
+            signal_noise = float(last_row["sig_noise"])
+            observation_noise = float(last_row["obs_noise"])
+
+            self.logger.info(
+                f"Loaded GP hypers from CSV {hypers_csv}: "
+                f"ARD lengthscale dim={len(lengthscale)}, "
+                f"sig_noise={signal_noise}, obs_noise={observation_noise}"
+            )
+
 
 
         #warm start percent: none or 0 to 100      
@@ -172,8 +205,6 @@ class GPActiveLearner(BaseActiveLearner):
         self.al_config = self.config.get('active_learning', {})
         acq_func_name = self.al_config.get('acquisition_f')
         
-        #optimization
-        self.ard = self.opt_config.get('ard')
 
         # Initialize lists
         state["selected_doc_ids"] = []
@@ -491,6 +522,25 @@ class GPActiveLearner(BaseActiveLearner):
             signal_noise,
             ard = self.ard
         ).to(self.device)
+
+        # log initial GP hyperparameters
+        with torch.no_grad():
+            ls = model.covar_module.base_kernel.lengthscale.detach().cpu()
+            if ls.numel() == 1:
+                ls_log = float(ls.item())
+            else:
+                ls_log = ls.view(-1).tolist()
+
+            sig_noise_log = float(model.covar_module.outputscale.item())
+            obs_noise_log = float(likelihood.noise.item())
+
+        # self.logger.debug(
+        #     "Initialized GP hypers | ard=%s | lengthscale=%s | signal_noise=%.6f | obs_noise=%.6f",
+        #     self.ard,
+        #     ls_log,
+        #     sig_noise_log,
+        #     obs_noise_log,
+        # )
 
         self._maybe_refit_gp(state, model, likelihood, X_obs, y_obs)
 
