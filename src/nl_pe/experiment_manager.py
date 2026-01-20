@@ -113,24 +113,31 @@ class ExperimentManager():
         self.logger.info(f"Using device: {device}")
 
         # --------------------------------------------------
-        # Construct training data
+        # Get queries, query embeddings, load QRELS
         # --------------------------------------------------
         self.qids, self.q_embs = self._get_qids_and_embs()
+        self.doc_ids, self.d_embs = self._get_dids_and_embs()
 
-    def _get_qids_and_embs(self):
-        queries_csv_path = self.data_config.get("queries_csv_path")
-        qdf = pd.read_csv(queries_csv_path)
-        qids = qdf.iloc[:, 0].tolist()
-        self.logger.info(f"Loaded {len(self.qids)} training queries")
+        #load qrels
+        qrels_path = self.config.get('data').get('qrels_path')
+        with open(qrels_path, "r") as qrels_file:
+            self.qrels = pytrec_eval.parse_qrel(qrels_file)
 
-        #load query embeddings to tensor
-        q_index_path = self.config.get('data').get('q_index_path')
-        #faiss index to cpu 
-        q_index = faiss.read_index(q_index_path)
-        q_embs_np = q_index.reconstruct_n(0, q_index.ntotal)
-        q_embs = torch.from_numpy(q_embs_np).float() # shape: (Q, D)
-        self.logger.info(f'loaded query embeddings with shape {q_embs.shape}')
-        return qids, q_embs
+        #get data construction function
+        f_get_train_set = getattr(self, self.config.get("pretraining").get("data_constr_func"))
+
+        #for each query:
+        for self.curr_q_idx, self.curr_qid in enumerate(self.qids):
+            #build X and Y
+            X,y = f_get_train_set() #X: KxD, y: K
+
+
+            #build model
+            #train
+            #write to subdir
+
+    def get_q_train_data(self):
+        pass
 
     def tune_gp(self):
 
@@ -299,31 +306,20 @@ class ExperimentManager():
         # --------------------------------------------------
         # Load queries, q embeddings, doc embeddings
         # --------------------------------------------------
-        #load qids
-        qids, q_embs = self._get_qids_and_embs()
-
-        #load doc embeddings to tensor
-        index_path = self.config.get('data').get('index_path')
-        index = faiss.read_index(index_path)
-        d_embs_np = index.reconstruct_n(0, index.ntotal) 
-        del index 
-        d_embs = torch.from_numpy(d_embs_np).float()   #shape: (N, D)
-        del d_embs_np        
-        self.logger.info(f'loaded doc embeddings with shape {d_embs.shape}')
-        #load doc_ids
-        doc_ids_path = self.config.get('data').get('doc_ids_path')
-        self.doc_ids = pickle.load(open(doc_ids_path, 'rb'))
+        #load query, doc ids and embeddings
+        self.qids, self.q_embs = self._get_qids_and_embs()
+        self.doc_ids, self.d_embs = self._get_dids_and_embs()
 
         #whether to include the query embedding in training
         omit_q = bool(self.config.get('pretraining').get('omit_q'))
 
         #set dimensions for X,Y
         Q = len(self.qids)
-        D = d_embs.shape[-1]
+        D = self.d_embs.shape[-1]
         if not omit_q:
-            K = d_embs.shape[0] + 1 #+1 for query
+            K = self.d_embs.shape[0] + 1 #+1 for query
         else:
-            K = d_embs.shape[0]
+            K = self.d_embs.shape[0]
             self.logger.warning("OMITING QUERY EMBEDDING/LABEL")
 
         #set query relevance label:
@@ -349,7 +345,7 @@ class ExperimentManager():
                 # fill Y[0:K] with doc relevance labels
                 Y[q_idx, :len(doc_labels)] = torch.tensor(doc_labels, dtype=torch.float32)
                 # fill X[q] with document embeddings
-                X[q_idx, :d_embs.shape[0], :] = d_embs
+                X[q_idx, :self.d_embs.shape[0], :] = self.d_embs
 
             #skip this block for now
             #else (not use all):
@@ -364,6 +360,34 @@ class ExperimentManager():
                 Y[q_idx, -1] = self.q_rel_label
 
         return X,Y
+    
+    def _get_dids_and_embs(self):
+        #load doc embeddings to tensor
+        index_path = self.config.get('data').get('index_path')
+        index = faiss.read_index(index_path)
+        d_embs_np = index.reconstruct_n(0, index.ntotal) 
+        d_embs = torch.from_numpy(d_embs_np).float()   #shape: (N, D)   
+        self.logger.info(f'loaded doc embeddings with shape {d_embs.shape}')
+        #load doc_ids
+        doc_ids_path = self.config.get('data').get('doc_ids_path')
+        doc_ids = pickle.load(open(doc_ids_path, 'rb'))
+        return doc_ids, d_embs
+
+    def _get_qids_and_embs(self):
+        #get list of qids and tensor of query embeddings for training
+        queries_csv_path = self.data_config.get("queries_csv_path")
+        qdf = pd.read_csv(queries_csv_path)
+        qids = qdf.iloc[:, 0].tolist()
+        self.logger.info(f"Loaded {len(qids)} training queries")
+
+        #load query embeddings to tensor
+        q_index_path = self.config.get('data').get('q_index_path')
+        #faiss index to cpu 
+        q_index = faiss.read_index(q_index_path)
+        q_embs_np = q_index.reconstruct_n(0, q_index.ntotal)
+        q_embs = torch.from_numpy(q_embs_np).float() # shape: (Q, D)
+        self.logger.info(f'loaded query embeddings with shape {q_embs.shape}')
+        return qids, q_embs
 
     #helper methods for training
     def _get_zero_mean(self):
