@@ -101,6 +101,36 @@ class ExperimentManager():
         gp = GPInference(self.config)
         gp.run_inference()
 
+    def tune_indep_gps(self):
+        self.logger.info(f"Starting independent gp tuning in {self.exp_dir}")
+        self.data_config = self.config.get('data', {})
+
+        # --------------------------------------------------
+        # Device setup
+        # --------------------------------------------------
+        device_cfg = self.config.get("device", "cpu")
+        device = torch.device("cuda" if device_cfg == "gpu" else "cpu")
+        self.logger.info(f"Using device: {device}")
+
+        # --------------------------------------------------
+        # Construct training data
+        # --------------------------------------------------
+        self.qids, self.q_embs = self._get_qids_and_embs()
+
+    def _get_qids_and_embs(self):
+        queries_csv_path = self.data_config.get("queries_csv_path")
+        qdf = pd.read_csv(queries_csv_path)
+        qids = qdf.iloc[:, 0].tolist()
+        self.logger.info(f"Loaded {len(self.qids)} training queries")
+
+        #load query embeddings to tensor
+        q_index_path = self.config.get('data').get('q_index_path')
+        #faiss index to cpu 
+        q_index = faiss.read_index(q_index_path)
+        q_embs_np = q_index.reconstruct_n(0, q_index.ntotal)
+        q_embs = torch.from_numpy(q_embs_np).float() # shape: (Q, D)
+        self.logger.info(f'loaded query embeddings with shape {q_embs.shape}')
+        return qids, q_embs
 
     def tune_gp(self):
 
@@ -199,8 +229,9 @@ class ExperimentManager():
             params.append(os_param)
             self.logger.info("Optimizing outputscale: raw_outputscale")
         else:
-            m0.covar_module.outputscale = 1.0
-            self.logger.info("NOT optimizing outputscale (fixed to 1.0)")
+            signal_noise = float(self.config.get('gp').get('signal_noise'))
+            m0.covar_module.outputscale = signal_noise
+            self.logger.info(f"NOT optimizing outputscale (fixed to {signal_noise})")
 
         # noise
         opt_noise = self.config.get('optimization').get('opt_noise')
@@ -209,8 +240,9 @@ class ExperimentManager():
             params.append(noise_param)
             self.logger.info("Optimizing noise: raw_noise")
         else:
-            m0.likelihood.noise = 1.0
-            self.logger.info("NOT optimizing noise (fixed to 1.0)")
+            obs_noise = float(self.config.get('gp').get('observation_noise'))
+            m0.likelihood.noise = obs_noise
+            self.logger.info(f"NOT optimizing noise (fixed to {obs_noise})")
 
         optimizer = torch.optim.Adam(params, lr=lr)
 
@@ -268,20 +300,7 @@ class ExperimentManager():
         # Load queries, q embeddings, doc embeddings
         # --------------------------------------------------
         #load qids
-        queries_csv_path = self.data_config.get("queries_csv_path")
-        qdf = pd.read_csv(queries_csv_path)
-        self.qids = qdf.iloc[:, 0].tolist()
-        self.logger.info(f"Loaded {len(self.qids)} training queries")
-
-        #load query embeddings to tensor
-        q_index_path = self.config.get('data').get('q_index_path')
-        #faiss index to cpu 
-        q_index = faiss.read_index(q_index_path)
-        q_embs_np = q_index.reconstruct_n(0, q_index.ntotal)
-        del q_index
-        q_embs = torch.from_numpy(q_embs_np).float() # shape: (Q, D)
-        del q_embs_np   
-        self.logger.info(f'loaded query embeddings with shape {q_embs.shape}')
+        qids, q_embs = self._get_qids_and_embs()
 
         #load doc embeddings to tensor
         index_path = self.config.get('data').get('index_path')
@@ -340,7 +359,7 @@ class ExperimentManager():
             
             if not omit_q:
                 # fill query embedding
-                X[q_idx, -1, :] = q_embs[q_idx]
+                X[q_idx, -1, :] = self.q_embs[q_idx]
                 # fill query relevance label
                 Y[q_idx, -1] = self.q_rel_label
 
