@@ -20,6 +20,7 @@ from gpytorch.mlls import SumMarginalLogLikelihood
 import math
 import csv
 import pytrec_eval
+from nl_pe.utils.hyperpriors import HyperpriorFitter
 
 class ExperimentManager():
 
@@ -101,56 +102,11 @@ class ExperimentManager():
         gp = GPInference(self.config)
         gp.run_inference()
 
-    def _init_training_params(self):
-        self.data_config = self.config.get('data', {})
 
-        # --------------------------------------------------
-        # Device setup
-        # --------------------------------------------------
-        device_cfg = self.config.get("device", "cpu")
-        self.device = torch.device("cuda" if device_cfg == "gpu" else "cpu")
-        self.logger.info(f"Using device: {self.device}")
-
-        # --------------------------------------------------
-        # Get queries, query embeddings, load QRELS
-        # --------------------------------------------------
-        self.qids, self.q_embs = self._get_qids_and_embs()
-        self.doc_ids, self.d_embs = self._get_dids_and_embs()
-        self.emb_dim = self.d_embs.shape[-1]
-
-        #load qrels
-        qrels_path = self.config.get('data').get('qrels_path')
-        with open(qrels_path, "r") as qrels_file:
-            self.qrels = pytrec_eval.parse_qrel(qrels_file)
-
-        #set query relevance label:
-        self.q_rel_label = float(self.config.get('gp').get('query_rel_label'))
-
-        #whether to include the query embedding in training
-        self.omit_q = bool(self.config.get('pretraining').get('omit_q'))
-        if self.omit_q:
-            self.logger.warning("OMITING QUERY EMBEDDING/LABEL")
-
-        #whether to use all docs
-        self.use_all_docs = self.config.get('pretraining').get('use_all_docs')
-
-        self.f_get_mean = getattr(self, self.config.get("pretraining").get("mean_constr_func"))
-        self.f_get_kernel = getattr(self, self.config.get("pretraining").get("kernel_constr_func"))
-        self.f_get_likelihood = getattr(self, self.config.get("pretraining").get("likelihood_constr_func"))
-        self.f_make_single_model = getattr(self, self.config.get("pretraining").get("single_model_constr_func"))
-
-        # --------------------------------------------------
-        # Optimizer parameters
-        # --------------------------------------------------
-        self.lr = self.config.get('optimization').get('lr')
-        #whether to optimize noise or not
-        self.opt_sig_noise = self.config.get('optimization').get('opt_sig_noise')
-        self.opt_noise = self.config.get('optimization').get('opt_noise')
-        #noise defaults, curr only used if not optimized
-        self.signal_noise = float(self.config.get('gp').get('signal_noise') or 0)
-        self.obs_noise = float(self.config.get('gp').get('observation_noise') or 0)
-        self.train_iters = self.config.get('optimization').get('train_iters')
-
+    def fit_hyperprior(self):
+        self.logger.info(f"Starting hyperparam fitting in {self.exp_dir}")
+        fitter = HyperpriorFitter(self.config)
+        fitter.fit_all()
 
     def tune_indep_gps(self):
         self.logger.info(f"Starting independent gp tuning in {self.exp_dir}")
@@ -179,7 +135,7 @@ class ExperimentManager():
             query_result_dir = self.results_dir / f"{qid}"
             query_result_dir.mkdir(exist_ok=True)
             train_log_path = query_result_dir / "training_log.csv"
-            self._start_train_log(train_log_path)
+            self._start_train_log(train_log_path, make_multi_q_df = True)
 
             for i in range(self.train_iters):
                 optimizer.zero_grad()
@@ -191,7 +147,10 @@ class ExperimentManager():
                 loss.backward()
                 optimizer.step()
 
-            self._log_training(i=i, loss=loss, model=model, train_log_path=train_log_path,)
+            self._log_training(i=self.train_iters, loss=loss, model=model, train_log_path=train_log_path, log_to_df = True)
+        #record csv of all final param values accross all queries
+        agg_csv_path = Path(self.exp_dir) / 'trained_params.csv'
+        self.df.to_csv(agg_csv_path, index=False)
 
     def tune_gp_list(self):
         self.logger.info(f"Starting gp tuning in {self.exp_dir}")
@@ -274,6 +233,56 @@ class ExperimentManager():
           
         #log final param vals
         self._log_training(i=self.train_iters,loss=loss, model=model, train_log_path=train_log_path,)
+
+    def _init_training_params(self):
+        self.data_config = self.config.get('data', {})
+
+        # --------------------------------------------------
+        # Device setup
+        # --------------------------------------------------
+        device_cfg = self.config.get("device", "cpu")
+        self.device = torch.device("cuda" if device_cfg == "gpu" else "cpu")
+        self.logger.info(f"Using device: {self.device}")
+
+        # --------------------------------------------------
+        # Get queries, query embeddings, load QRELS
+        # --------------------------------------------------
+        self.qids, self.q_embs = self._get_qids_and_embs()
+        self.doc_ids, self.d_embs = self._get_dids_and_embs()
+        self.emb_dim = self.d_embs.shape[-1]
+
+        #load qrels
+        qrels_path = self.config.get('data').get('qrels_path')
+        with open(qrels_path, "r") as qrels_file:
+            self.qrels = pytrec_eval.parse_qrel(qrels_file)
+
+        #set query relevance label:
+        self.q_rel_label = float(self.config.get('gp').get('query_rel_label'))
+
+        #whether to include the query embedding in training
+        self.omit_q = bool(self.config.get('pretraining').get('omit_q'))
+        if self.omit_q:
+            self.logger.warning("OMITING QUERY EMBEDDING/LABEL")
+
+        #whether to use all docs
+        self.use_all_docs = self.config.get('pretraining').get('use_all_docs')
+
+        self.f_get_mean = getattr(self, self.config.get("pretraining").get("mean_constr_func"))
+        self.f_get_kernel = getattr(self, self.config.get("pretraining").get("kernel_constr_func"))
+        self.f_get_likelihood = getattr(self, self.config.get("pretraining").get("likelihood_constr_func"))
+        self.f_make_single_model = getattr(self, self.config.get("pretraining").get("single_model_constr_func"))
+
+        # --------------------------------------------------
+        # Optimizer parameters
+        # --------------------------------------------------
+        self.lr = self.config.get('optimization').get('lr')
+        #whether to optimize noise or not
+        self.opt_sig_noise = self.config.get('optimization').get('opt_sig_noise')
+        self.opt_noise = self.config.get('optimization').get('opt_noise')
+        #noise defaults, curr only used if not optimized
+        self.signal_noise = float(self.config.get('gp').get('signal_noise') or 0)
+        self.obs_noise = float(self.config.get('gp').get('observation_noise') or 0)
+        self.train_iters = self.config.get('optimization').get('train_iters')
 
     def _build_gp_optimizer(self, model, lr):
         """
@@ -404,7 +413,7 @@ class ExperimentManager():
         self.logger.info(f'loaded query embeddings with shape {q_embs.shape}')
         return qids, q_embs
 
-    def _start_train_log(self, path):
+    def _start_train_log(self, path, make_multi_q_df = False):
         header = ["neg_mll", "sig_noise", "obs_noise"]
 
         if self.ard:
@@ -416,6 +425,11 @@ class ExperimentManager():
         with open(path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(header)
+
+        if make_multi_q_df:
+            if not hasattr(self, "df"):
+                self.df = pd.DataFrame(columns=header)
+
 
     #def _append_train_log_row(self, )
 
@@ -830,6 +844,7 @@ class ExperimentManager():
         loss,
         model,
         train_log_path,
+        log_to_df = False
     ):
         neg_mll = loss.item()
         sig_noise = model.covar_module.outputscale.item()
@@ -862,6 +877,10 @@ class ExperimentManager():
             obs_noise,
             ls_str,
         )
+
+        # --- to multi-query df ---
+        if log_to_df:
+            self.df.loc[len(self.df)] = row
 
     def run_experiment(self, exp_type):
         # Call the method dynamically
