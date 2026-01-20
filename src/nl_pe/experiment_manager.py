@@ -101,18 +101,15 @@ class ExperimentManager():
         gp = GPInference(self.config)
         gp.run_inference()
 
-    def tune_indep_gps(self):
-        self.logger.info(f"Starting independent gp tuning in {self.exp_dir}")
+    def _init_training_params(self):
         self.data_config = self.config.get('data', {})
-        self.results_dir = Path(self.exp_dir) / 'per_query_results'
-        self.results_dir.mkdir(exist_ok=True)
 
         # --------------------------------------------------
         # Device setup
         # --------------------------------------------------
         device_cfg = self.config.get("device", "cpu")
-        device = torch.device("cuda" if device_cfg == "gpu" else "cpu")
-        self.logger.info(f"Using device: {device}")
+        self.device = torch.device("cuda" if device_cfg == "gpu" else "cpu")
+        self.logger.info(f"Using device: {self.device}")
 
         # --------------------------------------------------
         # Get queries, query embeddings, load QRELS
@@ -126,35 +123,41 @@ class ExperimentManager():
         with open(qrels_path, "r") as qrels_file:
             self.qrels = pytrec_eval.parse_qrel(qrels_file)
 
-        #whether to use all docs
-        self.use_all_docs = self.config.get('pretraining').get('use_all_docs')
+        #set query relevance label:
+        self.q_rel_label = float(self.config.get('gp').get('query_rel_label'))
 
         #whether to include the query embedding in training
         self.omit_q = bool(self.config.get('pretraining').get('omit_q'))
         if self.omit_q:
             self.logger.warning("OMITING QUERY EMBEDDING/LABEL")
 
-        #set query relevance label:
-        self.q_rel_label = float(self.config.get('gp').get('query_rel_label'))
+        #whether to use all docs
+        self.use_all_docs = self.config.get('pretraining').get('use_all_docs')
 
-        #define gp funcs
-        f_get_mean = getattr(self, self.config.get("pretraining").get("mean_constr_func"))
-        f_get_kernel = getattr(self, self.config.get("pretraining").get("kernel_constr_func"))
-        f_get_likelihood = getattr(self, self.config.get("pretraining").get("likelihood_constr_func"))
-        f_make_single_model = getattr(self, self.config.get("pretraining").get("single_model_constr_func"))
+        self.f_get_mean = getattr(self, self.config.get("pretraining").get("mean_constr_func"))
+        self.f_get_kernel = getattr(self, self.config.get("pretraining").get("kernel_constr_func"))
+        self.f_get_likelihood = getattr(self, self.config.get("pretraining").get("likelihood_constr_func"))
+        self.f_make_single_model = getattr(self, self.config.get("pretraining").get("single_model_constr_func"))
 
         # --------------------------------------------------
         # Optimizer parameters
         # --------------------------------------------------
-        lr = self.config.get('optimization').get('lr')
+        self.lr = self.config.get('optimization').get('lr')
         #whether to optimize noise or not
         self.opt_sig_noise = self.config.get('optimization').get('opt_sig_noise')
         self.opt_noise = self.config.get('optimization').get('opt_noise')
         #noise defaults, curr only used if not optimized
         self.signal_noise = float(self.config.get('gp').get('signal_noise') or 0)
         self.obs_noise = float(self.config.get('gp').get('observation_noise') or 0)
-        train_iters = self.config.get('optimization').get('train_iters')
+        self.train_iters = self.config.get('optimization').get('train_iters')
 
+
+    def tune_indep_gps(self):
+        self.logger.info(f"Starting independent gp tuning in {self.exp_dir}")
+        self.results_dir = Path(self.exp_dir) / 'per_query_results'
+        self.results_dir.mkdir(exist_ok=True)
+
+        self._init_training_params()
 
         # --------------------------------------------------
         # Per q: build data, model, train, log
@@ -164,13 +167,13 @@ class ExperimentManager():
             X,y = self._get_q_train_data(q_idx, qid) #X: KxD, y: K
             self.logger.info(f"created tensors X shape {X.shape}, Y shape {y.shape} for query {qid}")
 
-            mean = f_get_mean().to(device)
-            kernel = f_get_kernel().to(device)
-            likelihood = f_get_likelihood().to(device)
+            mean = self.f_get_mean().to(self.device)
+            kernel = self.f_get_kernel().to(self.device)
+            likelihood = self.f_get_likelihood().to(self.device)
 
-            model = f_make_single_model(X,y,likelihood,kernel,mean).to(device)
+            model = self.f_make_single_model(X,y,likelihood,kernel,mean).to(self.device)
             mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-            optimizer = self._build_gp_optimizer(model, lr)
+            optimizer = self._build_gp_optimizer(model, self.lr)
 
             #start logging
             query_result_dir = self.results_dir / f"{qid}"
@@ -178,7 +181,7 @@ class ExperimentManager():
             train_log_path = query_result_dir / "training_log.csv"
             self._start_train_log(train_log_path)
 
-            for i in range(train_iters):
+            for i in range(self.train_iters):
                 optimizer.zero_grad()
                 output = model(X)
                 loss = -mll(output, y)
@@ -191,23 +194,14 @@ class ExperimentManager():
             self._log_training(i=i, loss=loss, model=model, train_log_path=train_log_path,)
 
     def tune_gp_list(self):
-
         self.logger.info(f"Starting gp tuning in {self.exp_dir}")
-        self.data_config = self.config.get('data', {})
-
-        # --------------------------------------------------
-        # Device setup
-        # --------------------------------------------------
-        device_cfg = self.config.get("device", "cpu")
-        device = torch.device("cuda" if device_cfg == "gpu" else "cpu")
-        self.logger.info(f"Using device: {device}")
-
+        self._init_training_params()
         # --------------------------------------------------
         # Construct training data
         # --------------------------------------------------
         X, Y = self._get_train_data_indep_modellist()     # X: QxKxD, Y: QxK
-        X = X.to(device)
-        Y = Y.to(device)
+        X = X.to(self.device)
+        Y = Y.to(self.device)
 
         self.Q, self.K, self.emb_dim = X.shape
 
@@ -216,14 +210,9 @@ class ExperimentManager():
         # --------------------------------------------------
         # Shared GP components
         # --------------------------------------------------
-        f_get_mean = getattr(self, self.config.get("pretraining").get("mean_constr_func"))
-        f_get_kernel = getattr(self, self.config.get("pretraining").get("kernel_constr_func"))
-        f_get_likelihood = getattr(self, self.config.get("pretraining").get("likelihood_constr_func"))
-        f_make_single_model = getattr(self, self.config.get("pretraining").get("single_model_constr_func"))
-
-        shared_mean = f_get_mean().to(device)
-        shared_kernel = f_get_kernel().to(device)
-        shared_likelihood = f_get_likelihood().to(device)
+        shared_mean = self.f_get_mean().to(self.device)
+        shared_kernel = self.f_get_kernel().to(self.device)
+        shared_likelihood = self.f_get_likelihood().to(self.device)
 
         # --------------------------------------------------
         # Build per-query GP submodels
@@ -237,13 +226,13 @@ class ExperimentManager():
             train_x_q = X[q]   # K x D
             train_y_q = Y[q]   # K
 
-            model_q = f_make_single_model(
+            model_q = self.f_make_single_model(
                 train_x_q,
                 train_y_q,
                 shared_likelihood,
                 shared_kernel,
                 shared_mean,
-            ).to(device)
+            ).to(self.device)
 
             models.append(model_q)
             likelihoods.append(shared_likelihood)
@@ -251,25 +240,15 @@ class ExperimentManager():
         # --------------------------------------------------
         # Wrap models + likelihoods, def loss
         # --------------------------------------------------
-        model = gpytorch.models.IndependentModelList(*models).to(device)
-        likelihood = gpytorch.likelihoods.LikelihoodList(*likelihoods).to(device)
+        model = gpytorch.models.IndependentModelList(*models).to(self.device)
+        likelihood = gpytorch.likelihoods.LikelihoodList(*likelihoods).to(self.device)
 
         mll = SumMarginalLogLikelihood(likelihood, model)
 
-        # --------------------------------------------------
-        # Optimizer parameters
-        # --------------------------------------------------
-        lr = self.config.get('optimization').get('lr')
-        #whether to optimize noise or not
-        self.opt_sig_noise = self.config.get('optimization').get('opt_sig_noise')
-        self.opt_noise = self.config.get('optimization').get('opt_noise')
-        #noise defaults, curr only used if not optimized
-        self.signal_noise = float(self.config.get('gp').get('signal_noise') or 0)
-        self.obs_noise = float(self.config.get('gp').get('observation_noise') or 0)
 
         #can use the first models params only since they are shared
         m0 = model.models[0]
-        optimizer = self._build_gp_optimizer(m0, lr)
+        optimizer = self._build_gp_optimizer(m0, self.lr)
 
         #--------------------------
         #Output log setup
@@ -283,9 +262,7 @@ class ExperimentManager():
         model.train()
         likelihood.train()
 
-        train_iters = self.config.get('optimization').get('train_iters')
-
-        for i in range(train_iters):
+        for i in range(self.train_iters):
             optimizer.zero_grad()
             output = model(*model.train_inputs)
             loss = -mll(output, model.train_targets)
@@ -296,7 +273,7 @@ class ExperimentManager():
             optimizer.step()
           
         #log final param vals
-        self._log_training(i=train_iters,loss=loss, model=model, train_log_path=train_log_path,)
+        self._log_training(i=self.train_iters,loss=loss, model=model, train_log_path=train_log_path,)
 
     def _build_gp_optimizer(self, model, lr):
         """
@@ -342,28 +319,6 @@ class ExperimentManager():
 
     #helper for getting query, doc embeddings and gt labels
     def _get_train_data_indep_modellist(self):
-        # --------------------------------------------------
-        # Load queries, q embeddings, doc embeddings
-        # --------------------------------------------------
-        #load query, doc ids and embeddings
-        self.qids, self.q_embs = self._get_qids_and_embs()
-        self.doc_ids, self.d_embs = self._get_dids_and_embs()
-
-        #whether to include the query embedding in training
-        self.omit_q = bool(self.config.get('pretraining').get('omit_q'))
-        if self.omit_q:
-            self.logger.warning("OMITING QUERY EMBEDDING/LABEL")
-
-        #whether to use all docs
-        self.use_all_docs = self.config.get('pretraining').get('use_all_docs')
-
-        #set query relevance label:
-        self.q_rel_label = float(self.config.get('gp').get('query_rel_label'))
-
-        qrels_path = self.config.get('data').get('qrels_path')
-        with open(qrels_path, "r") as f:
-            self.qrels = pytrec_eval.parse_qrel(f)
-
         # --------------------------------------------------
         # Build per-query tensors and stack
         # --------------------------------------------------
