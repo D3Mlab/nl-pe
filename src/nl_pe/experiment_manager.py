@@ -141,8 +141,9 @@ class ExperimentManager():
                 optimizer.zero_grad()
                 output = model(X)
                 loss = -mll(output, y)
-
-                self._log_training(i=i, loss=loss, model=model, train_log_path=train_log_path,)
+                
+                if i%20 == 0:
+                    self._log_training(i=i, loss=loss, model=model, train_log_path=train_log_path,)
 
                 loss.backward()
                 optimizer.step()
@@ -226,7 +227,8 @@ class ExperimentManager():
             output = model(*model.train_inputs)
             loss = -mll(output, model.train_targets)
 
-            self._log_training(i=i, loss=loss, model=model.models[0], train_log_path=train_log_path,)
+            if i%20 == 0:
+                self._log_training(i=i, loss=loss, model=model.models[0], train_log_path=train_log_path,)
 
             loss.backward()
             optimizer.step()
