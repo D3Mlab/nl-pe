@@ -117,6 +117,7 @@ class ExperimentManager():
         # --------------------------------------------------
         self.qids, self.q_embs = self._get_qids_and_embs()
         self.doc_ids, self.d_embs = self._get_dids_and_embs()
+        self.emb_dim = self.d_embs.shape[-1]
 
         #load qrels
         qrels_path = self.config.get('data').get('qrels_path')
@@ -127,20 +128,52 @@ class ExperimentManager():
         self.use_all_docs = self.config.get('pretraining').get('use_all_docs')
 
         #whether to include the query embedding in training
-        omit_q = bool(self.config.get('pretraining').get('omit_q'))
+        self.omit_q = bool(self.config.get('pretraining').get('omit_q'))
+        if self.omit_q:
+            self.logger.warning("OMITING QUERY EMBEDDING/LABEL")
 
-        #for each query:
-        for self.curr_q_idx, self.curr_qid in enumerate(self.qids):
+        #set query relevance label:
+        self.q_rel_label = float(self.config.get('gp').get('query_rel_label'))
+
+        #define gp funcs
+        f_get_mean = getattr(self, self.config.get("pretraining").get("mean_constr_func"))
+        f_get_kernel = getattr(self, self.config.get("pretraining").get("kernel_constr_func"))
+        f_get_likelihood = getattr(self, self.config.get("pretraining").get("likelihood_constr_func"))
+        f_make_single_model = getattr(self, self.config.get("pretraining").get("single_model_constr_func"))
+
+        # --------------------------------------------------
+        # Optimizer parameters
+        # --------------------------------------------------
+        lr = self.config.get('optimization').get('lr')
+        #whether to optimize noise or not
+        self.opt_sig_noise = self.config.get('optimization').get('opt_sig_noise')
+        self.opt_noise = self.config.get('optimization').get('opt_noise')
+        #noise defaults, curr only used if not optimized
+        self.signal_noise = float(self.config.get('gp').get('signal_noise') or 0)
+        self.obs_noise = float(self.config.get('gp').get('observation_noise') or 0)
+
+        # --------------------------------------------------
+        # Per q: build data, model, train, log
+        # --------------------------------------------------
+        for q_idx, qid in enumerate(self.qids):
             #build X and Y
-            X,y = _get_q_train_data() #X: KxD, y: K
+            X,y = self._get_q_train_data(q_idx, qid) #X: KxD, y: K
+            self.logger.info(f"created tensors X shape {X.shape}, Y shape {y.shape} for query {qid}")
+
+            mean = f_get_mean().to(device)
+            kernel = f_get_kernel().to(device)
+            likelihood = f_get_likelihood().to(device)
+
+            model = f_make_single_model(X,y,likelihood,kernel,mean).to(device)
+            mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+            optimizer = self._build_gp_optimizer(model, lr)
 
 
-            #build model
             #train
             #write to subdir
 
 
-    def tune_gp(self):
+    def tune_gp_list(self):
 
         self.logger.info(f"Starting gp tuning in {self.exp_dir}")
         self.data_config = self.config.get('data', {})
@@ -155,21 +188,13 @@ class ExperimentManager():
         # --------------------------------------------------
         # Construct training data
         # --------------------------------------------------
-        f_get_train_set = getattr(self, self.config.get("pretraining").get("data_constr_func"))
-
-        X, Y = f_get_train_set()          # X: QxKxD, Y: QxK
+        X, Y = self._get_train_data_indep_modellist()     # X: QxKxD, Y: QxK
         X = X.to(device)
         Y = Y.to(device)
 
         self.Q, self.K, self.emb_dim = X.shape
 
-        self.logger.info(
-            "Constructed training set via %s (Q=%d, K=%d, D=%d)",
-            f_get_train_set,
-            self.Q,
-            self.K,
-            self.emb_dim,
-        )
+        self.logger.info( "Constructed training set (Q=%d, K=%d, D=%d)", self.Q, self.K, self.emb_dim,)
 
         # --------------------------------------------------
         # Shared GP components
@@ -218,41 +243,16 @@ class ExperimentManager():
         # Optimizer parameters
         # --------------------------------------------------
         lr = self.config.get('optimization').get('lr')
-        
+        #whether to optimize noise or not
+        self.opt_sig_noise = self.config.get('optimization').get('opt_sig_noise')
+        self.opt_noise = self.config.get('optimization').get('opt_noise')
+        #noise defaults, curr only used if not optimized
+        self.signal_noise = float(self.config.get('gp').get('signal_noise') or 0)
+        self.obs_noise = float(self.config.get('gp').get('observation_noise') or 0)
+
         #can use the first models params only since they are shared
         m0 = model.models[0]
-        params = []
-        #always include lengthscale(multiple for ard)
-        ls_param = m0.covar_module.base_kernel.raw_lengthscale
-        params.append(ls_param)
-        self.logger.info(
-            "Optimizing lengthscale(s): raw_lengthscale, shape=%s",
-            tuple(ls_param.shape),
-        )
-
-        # outputscale
-        opt_sig_noise = self.config.get('optimization').get('opt_sig_noise')
-        if opt_sig_noise:
-            os_param = m0.covar_module.raw_outputscale
-            params.append(os_param)
-            self.logger.info("Optimizing outputscale: raw_outputscale")
-        else:
-            signal_noise = float(self.config.get('gp').get('signal_noise'))
-            m0.covar_module.outputscale = signal_noise
-            self.logger.info(f"NOT optimizing outputscale (fixed to {signal_noise})")
-
-        # noise
-        opt_noise = self.config.get('optimization').get('opt_noise')
-        if opt_noise:
-            noise_param = m0.likelihood.raw_noise
-            params.append(noise_param)
-            self.logger.info("Optimizing noise: raw_noise")
-        else:
-            obs_noise = float(self.config.get('gp').get('observation_noise'))
-            m0.likelihood.noise = obs_noise
-            self.logger.info(f"NOT optimizing noise (fixed to {obs_noise})")
-
-        optimizer = torch.optim.Adam(params, lr=lr)
+        optimizer = self._build_gp_optimizer(m0, lr)
 
         #--------------------------
         #Output log setup
@@ -301,6 +301,49 @@ class ExperimentManager():
             model=model,
             train_log_path=train_log_path,
         )
+
+    def _build_gp_optimizer(self, model, lr):
+        """
+        model: a single GP model whose parameters are representative
+            (e.g., model.models[0] for IndependentModelList where params are shared)
+        """
+        params = []
+
+        # --------------------------------------------------
+        # Lengthscale(s) — always optimized
+        # --------------------------------------------------
+        ls_param = model.covar_module.base_kernel.raw_lengthscale
+        params.append(ls_param)
+        self.logger.info("Optimizing lengthscale(s): raw_lengthscale, shape=%s", tuple(ls_param.shape),)
+
+        # --------------------------------------------------
+        # Outputscale (signal variance)
+        # --------------------------------------------------
+        if self.opt_sig_noise:
+            os_param = model.covar_module.raw_outputscale
+            params.append(os_param)
+            self.logger.info("Optimizing outputscale: raw_outputscale")
+        else:
+            model.covar_module.outputscale = self.signal_noise
+            self.logger.info(
+                f"NOT optimizing outputscale (fixed to {self.signal_noise})"
+            )
+
+        # --------------------------------------------------
+        # Observation noise
+        # --------------------------------------------------
+        if self.opt_noise:
+            noise_param = model.likelihood.raw_noise
+            params.append(noise_param)
+            self.logger.info("Optimizing noise: raw_noise")
+        else:
+            model.likelihood.noise = self.obs_noise
+            self.logger.info(
+                f"NOT optimizing noise (fixed to {self.obs_noise})"
+            )
+
+        return torch.optim.Adam(params, lr=lr)
+
 
     #helper for getting query, doc embeddings and gt labels
     def _get_train_data_indep_modellist(self):
