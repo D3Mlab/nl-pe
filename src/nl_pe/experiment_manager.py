@@ -103,7 +103,7 @@ class ExperimentManager():
         gp.run_inference()
 
 
-    def fit_hyperprior(self):
+    def fit_hyperpriors(self):
         self.logger.info(f"Starting hyperparam fitting in {self.exp_dir}")
         fitter = HyperpriorFitter(self.config)
         fitter.fit_all()

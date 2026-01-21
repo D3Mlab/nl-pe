@@ -4,11 +4,12 @@ import os
 from nl_pe.utils.setup_logging import setup_logging
 from pathlib import Path
 import json
+from scipy.stats import gamma
 
 class HyperpriorFitter():
     def __init__(self, config):
         self.config = config
-        self.config['exp_dir'] = self.exp_dir
+        self.exp_dir = self.config['exp_dir']
         self.logger = setup_logging(self.__class__.__name__, config = self.config, output_file=os.path.join(self.config['exp_dir'], "experiment.log"))          
      
     def fit_all(self):
@@ -78,9 +79,30 @@ class HyperpriorFitter():
         self.logger.info(f"fit lognormal for {name}: mu={mu:.4f}, sigma={sigma:.4f}")
 
     def fit_indep_gamma_2d(self, x, name):
-        pass
-        #name will be something like "lengthscale", for which you'll make an entry name: {name_0: {'dist': 'indep_gamma', 'alpha': alpha, 'beta': beta} for each dimension 0 to K-1 in the named param}
-        #expect a QxD ndarray in x
+        x = np.asarray(x)
+        Q, D = x.shape
+        self.res[name] = {}
+        for d in range(D):
+            xd = x[:, d]
+            if any(v <= 0 for v in xd):
+                self.logger.info(f"non-positive values found for {name}_{d}, cannot fit gamma")
+                continue
+            try:
+                alpha, loc, scale = gamma.fit(xd, floc=0)
+            except (ValueError, RuntimeWarning):
+                #if variance between vals is near 0, crash.
+                # Add small relative noise (1e-0.5 of the value)
+                jitter = xd * np.random.uniform(1e-3, 1e-1, size=xd.shape)
+                alpha, loc, scale = gamma.fit(xd + jitter, floc=0)
+                self.logger.info(f"MLE succeeded after adding jitter for {name}_{d}")
+            self.res[name][f"{name}_{d}"] = {"dist": "indep_gamma", "alpha": alpha, "scale": scale}
+            self.logger.debug(f"fit indep gamma (MLE) for {name}_{d}: alpha={alpha:.4f}, scale={scale:.4f}")
 
-        #scipy stats gamma fitting: https://stackoverflow.com/questions/2896179/fitting-a-gamma-distribution-with-python-scipy
-        #alpha, loc, scale = gamma.fit(xd, floc=0)
+    def fit_gamma_1d(self, x, name):
+        x = np.asarray(x)
+        if np.any(x <= 0):
+            self.logger.info(f"non-positive values found for {name}, cannot fit gamma")
+            return
+        alpha, loc, scale = gamma.fit(x, floc=0)
+        self.res[name] = {"dist": "gamma", "alpha": alpha, "scale": scale}
+        self.logger.debug(f"fit gamma for {name}: alpha={alpha:.4f}, scale={scale:.4f}")
