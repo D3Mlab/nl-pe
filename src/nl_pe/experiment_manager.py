@@ -23,6 +23,7 @@ import pytrec_eval
 from nl_pe.utils.hyperpriors import HyperpriorFitter
 from nl_pe.gp_tests.inference import GPInference
 from nl_pe.query_gen.q_gen import QueryGenerator
+import re
 
 
 class ExperimentManager():
@@ -78,14 +79,33 @@ class ExperimentManager():
         qids = qs_df.iloc[:, 0].tolist()
         queries = qs_df.iloc[:, 1].tolist()
 
-        for qid, query in zip(qids, queries):
+        # read query reformulations from columns q_1 ... q_k (numeric suffix only)
+        q_reform_cols = sorted(
+            [c for c in qs_df.columns if re.fullmatch(r"q_\d+", c) and c != "q_0"],
+            key=lambda x: int(x.split("_")[1])
+        )
+
+        if q_reform_cols:
+            q_reformulations = qs_df[q_reform_cols].apply(
+                lambda row: [
+                    str(x)
+                    for x in row
+                    if pd.notna(x) and str(x) != "PARSING_ERROR"
+                ],
+                axis=1
+            ).tolist()
+        else:
+            q_reformulations = [[] for _ in range(len(qs_df))]
+
+        for qid, query, q_reforms in zip(qids, queries, q_reformulations):
             try:
                 self.logger.info(f"Ranking query {qid}: {query}")
 
                 state = {
                 "query": query,
                 'qid': str(qid),
-                'terminate': False
+                'terminate': False,
+                'query_reformulations': q_reforms,
                 }
 
                 result = self.agent.act(state)
