@@ -21,6 +21,9 @@ import math
 import csv
 import pytrec_eval
 from nl_pe.utils.hyperpriors import HyperpriorFitter
+from nl_pe.gp_tests.inference import GPInference
+from nl_pe.query_gen.q_gen import QueryGenerator
+
 
 class ExperimentManager():
 
@@ -96,9 +99,12 @@ class ExperimentManager():
             except Exception as e:
                 self.logger.error(f'Failed to rank or write results for query {qid}: {str(e)}')
 
+    def gen_qs(self):
+        q_generator = QueryGenerator(self.config)
+        q_generator.generate()
+
     def gp_inf(self):
         self.logger.info("Starting GP Inference speed experiment...")
-        from nl_pe.gp_tests.inference import GPInference
         gp = GPInference(self.config)
         gp.run_inference()
 

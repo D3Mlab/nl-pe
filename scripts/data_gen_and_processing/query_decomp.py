@@ -16,14 +16,14 @@ from nl_pe.utils.text_processing import list_to_text_block
 # how many new queries to generate per test query
 k_new_qs = 4
 # how many test queries to process, process all if None
-n_test_qs = None
+n_test_qs = 5
 # LLM -- use these to overwrite the values in config['llm']
 model_name = "gpt-5"
 model_class = "OpenAILLM"
 temperature = 1
 
 # prompt:
-template_path = 'q_decomp.jinja2'
+template_path = 'q_decomp.jinja2'  #'eqr.jinja2'    #'q_decomp.jinja2'
 
 CONFIG_PATH = "configs/llm/config.yaml"
 
@@ -61,7 +61,7 @@ q_texts = df["q_text"].tolist()
 # start a new .csv in the same dir as path_to_test_qs with the following naming:
 # query_decomp_{model_name}_{k_new_qs}.csv
 input_path = Path(path_to_test_qs)
-output_path = input_path.parent / f"query_decomp_{model_name}_{k_new_qs}.csv"
+output_path = input_path.parent / f"test_decomp_rerun_{model_name}_{k_new_qs}.csv" #f"query_decomp_{model_name}_{k_new_qs}.csv"
 
 # this new .csv will have the following columns:
 # 'q_id', 'q_0', 'q_1', ..., 'q_{k_new_qs}'
