@@ -1,0 +1,24 @@
+Given an initial query:
+1. Generate a set of {{k_new}} diverse topics that might describe information that would be helpful in answering this query, using at most one sentence per topic.
+2. For each topic, provide a detailed elaboration on the information desired, using at least one example and 2-4 sentences per elaboration. 
+
+<initial query>
+{{q}}
+</initial query>
+
+Respond ONLY with a single valid JSON object of the following form (The i-th elaboration MUST correspond to the i-th topic.):
+
+{
+  "topic_list": [
+    "<topic_1>",
+    "<topic_2>",
+    ...
+    "<topic_{{k_new}}>"
+  ],
+  "elaborations_list": [
+    "<elaboration_1>",
+    "<elaboration_2>",
+    ...
+    "<elaboration_{{k_new}}>"
+  ]
+}

@@ -25,12 +25,11 @@ class QueryGenerator():
         # I/O
         path_to_test_qs = self.config.get("data", {}).get("queries_csv_path")
         f_make_writer = getattr(self, self.config.get("data", {}).get("f_make_writer"))
-        
+        f_write_row = getattr(self, self.config['data'].get('f_write_row'))
 
         # prompt / template params
         template_path = self.config.get("templates", {}).get("template_path")
         f_make_prompt_dict = getattr(self, self.config['templates'].get('f_make_prompt_dict'))
-        f_write_row = getattr(self, self.config['templates'].get('f_write_row'))
 
         # debug logging
         self.logger.info(f"k_new_qs: {self.k_new_qs}")
@@ -52,14 +51,54 @@ class QueryGenerator():
         #Prompter
         prompter = Prompter(self.config)
 
-
         for q_id, q in zip(q_ids, q_texts):
 
             prompt_dict = f_make_prompt_dict(q)
             response = prompter.prompt_from_temp(template_path, prompt_dict)
-            self.logger.debug(f"Full response for q_id={q_id}:", response)
+            self.logger.debug(f"Full response for q_id={q_id}: {response}")
 
             f_write_row(q_id, q, response)
+
+    def _write_eqr_row(self, q_id, q, response):
+
+        row = {
+            "q_id": q_id,
+            "q_0": q,
+            "k_0": "",  # no topic for original query
+        }
+
+        topics = None
+        elaborations = None
+
+        # note that the prompter adds "JSON_dict" to the response if it can parse it
+        if isinstance(response, dict) and "JSON_dict" in response:
+            json_data = response["JSON_dict"]
+
+            if isinstance(json_data, dict):
+                topics = json_data.get("topic_list")
+                elaborations = json_data.get("elaborations_list")
+
+        # normalize failures
+        if not isinstance(topics, list):
+            topics = []
+        if not isinstance(elaborations, list):
+            elaborations = []
+
+        # fill q_i (elaborations-as-queries) and k_i (topics)
+        for i in range(1, self.k_new_qs + 1):
+            if i <= len(elaborations):
+                row[f"q_{i}"] = elaborations[i - 1]
+            else:
+                row[f"q_{i}"] = "PARSING_ERROR"
+
+            if i <= len(topics):
+                row[f"k_{i}"] = topics[i - 1]
+            else:
+                row[f"k_{i}"] = "PARSING_ERROR"
+
+        self.writer.writerow(row)
+        self._csv_file.flush()
+
 
     def _write_q_decomp_row(self, q_id, q, response):
         
@@ -103,7 +142,15 @@ class QueryGenerator():
             "k_tot": self.k_new_qs + 1
         }
         return prompt_dict
-    
+        
+    def _make_eqr_prompt_dict(self, q):
+        prompt_dict = {
+            "q": q,
+            "k_new": self.k_new_qs,
+        }
+        return prompt_dict
+
+
     def _make_q_decomp_writer(self):
         # this new .csv will have with columns:
         # 'q_id', 'q_0', 'q_1', ..., 'q_{k_new_qs}'
