@@ -391,6 +391,8 @@ class GPActiveLearner(BaseActiveLearner):
         # pop embeddings
         if "query_emb" in state:
             state.pop("query_emb")
+        if "query_reformation_embeddings" in state:
+            state.pop("query_reformation_embeddings")
 
         self.logger.debug(f"Final ranked list created with top 5 docs: {state['top_k_psgs'][:5]}")
 
