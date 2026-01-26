@@ -439,7 +439,7 @@ class GPActiveLearner(BaseActiveLearner):
                 elif acq_func_name == "greedy":
                     scores = self._greedy_batch(model, batch_embs)
                 elif acq_func_name == 'greedy_epsilon':
-                    batch_max_score, batch_max_idx = self._greedy_epsilon_batch(model, batch_embs)
+                    scores = self._greedy_epsilon_batch(model, batch_embs)
                 elif acq_func_name == "lse_straddle":
                     scores = self._lse_straddle_batch(model, batch_embs)
                 elif acq_func_name == "lse_margin":
