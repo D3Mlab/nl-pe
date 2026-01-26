@@ -17,3 +17,17 @@ corpus.jsonl → docs.csv (d_id, d_text)
 queries.jsonl → queries.csv (q_id,q_text), or train_queries.csv and test_queries.csv
 qrels/*.tsv → qrels/*.txt
 
+3. Embed (full dimensionality):
+python src\nl_pe\experiment_manager.py -e index_corpus -c <path_to_embedder_config>
+
+4. Reduce dimensionality (matryoshka only)
+embed using DimTruncator class, eg via config that has
+
+```
+embedding:
+  class: DimTruncator  
+  inference_batch_size: 100
+  index_method: truncate_faiss_exact
+  init_index_path: data/ir/beir/nfcorpus/gemini-3072/faiss/index
+  matryoshka_dim: 48
+```

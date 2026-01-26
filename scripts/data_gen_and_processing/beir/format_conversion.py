@@ -46,7 +46,7 @@ def process_corpus_to_docs(corpus_path, docs_path):
     print(f"Converted {corpus_path} to {docs_path}")
 
 def process_queries_to_csv(queries_path, train_ids=None, test_ids=None, train_queries_path=None, test_queries_path=None, queries_csv_path=None):
-    """Convert queries.jsonl to queries.csv, or split into train_queries.csv and test_queries.csv if train_ids and test_ids provided."""
+    """Convert queries.jsonl to test_queries.csv, or split into train_queries.csv and test_queries.csv if train_ids and test_ids provided."""
     queries_data = []
     with open(queries_path, 'r', encoding='utf-8') as f_in:
         for line in f_in:
@@ -87,7 +87,7 @@ if __name__ == "__main__":
     corpus_path = os.path.join(dataset_dir, 'corpus.jsonl')
     queries_path = os.path.join(dataset_dir, 'queries.jsonl')
     docs_path = os.path.join(dataset_dir, 'docs.csv')
-    queries_csv_path = os.path.join(dataset_dir, 'queries.csv')
+    queries_csv_path = os.path.join(dataset_dir, 'test_queries.csv')
 
     if not os.path.exists(corpus_path):
         print(f"Error: {corpus_path} not found.")
