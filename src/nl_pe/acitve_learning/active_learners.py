@@ -58,8 +58,10 @@ class GPActiveLearner(BaseActiveLearner):
         # Data config for index and batch size
         data_config = self.config.get('data', {})
         index_path = data_config.get('index_path')
-        #TODO: optimize to not read all vectors into CPU RAM? 
         self.index = faiss.read_index(index_path)
+        # Load all embeddings into CPU torch tensor once
+        self.d_embs_cpu = torch.from_numpy(self.index.reconstruct_n(0, self.index.ntotal)).float()
+        del self.index
         doc_ids_path = data_config.get('doc_ids_path')
         self.doc_ids = pickle.load(open(doc_ids_path, 'rb'))
         self.embedding_batch_size = data_config.get('embedding_batch_size', len(self.doc_ids))
@@ -286,7 +288,7 @@ class GPActiveLearner(BaseActiveLearner):
 
                     # Get label and embedding
                     y_new = self.get_single_rel_judgment(state, d_id)
-                    X_new = torch.from_numpy(self.index.reconstruct(idx)).float().unsqueeze(0).to(self.device)
+                    X_new = self.d_embs_cpu[idx].unsqueeze(0).to(self.device)
 
                     # Update observations and selected docs
                     X_obs = torch.cat([X_obs, X_new], dim=0)
@@ -344,7 +346,7 @@ class GPActiveLearner(BaseActiveLearner):
             self.logger.debug(f"Retrieved relevance label {y_new} for document {selected_doc_id}")
 
             # Update observations
-            X_new = torch.from_numpy(self.index.reconstruct(selected_idx)).float().unsqueeze(0).to(self.device)
+            X_new = self.d_embs_cpu[selected_idx].unsqueeze(0).to(self.device)
             X_obs = torch.cat([X_obs, X_new], dim=0)
             y_obs = torch.cat([y_obs, torch.tensor([y_new], dtype=torch.float32).to(self.device)], dim=0)
             self.logger.debug(f"Observations updated to {len(X_obs)} points")
@@ -359,7 +361,7 @@ class GPActiveLearner(BaseActiveLearner):
             observation_noise=observation_noise,
         )
 
-        n_total = self.index.ntotal
+        n_total = self.d_embs_cpu.shape[0]
         batch_size = self.embedding_batch_size
         n_batches = math.ceil(n_total / batch_size)
         posterior_means = []
@@ -370,7 +372,7 @@ class GPActiveLearner(BaseActiveLearner):
                 start = i * batch_size
                 end = min((i + 1) * batch_size, n_total)
                 io_start = time.time()
-                batch_embs = torch.from_numpy(self.index.reconstruct_n(start, end - start)).float().to(self.device)
+                batch_embs = self.d_embs_cpu[start:end].to(self.device)
                 io_time = time.time() - io_start
                 final_io_time += io_time
                 gp_start = time.time()
@@ -418,14 +420,9 @@ class GPActiveLearner(BaseActiveLearner):
                 end = min(i + batch_size, n_unobs)
                 batch_indices = unobserved_indices[i:end]
 
-                # IO time: reconstructing embeddings
+                # IO time: retrieving embeddings from pre-loaded tensor
                 io_start = time.time()
-                batch_embs_list = []
-                for idx in batch_indices:
-                    emb = self.index.reconstruct(idx)
-                    batch_embs_list.append(emb)
-                batch_embs_np = np.array(batch_embs_list)
-                batch_embs = torch.from_numpy(batch_embs_np).float().to(self.device)
+                batch_embs = self.d_embs_cpu[batch_indices].to(self.device)
                 io_time = time.time() - io_start
                 total_io_time += io_time
 
