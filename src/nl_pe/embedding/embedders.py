@@ -134,7 +134,7 @@ class BaseEmbedder(ABC):
             index = faiss.index_gpu_to_cpu(index)
         os.makedirs(os.path.dirname(index_path), exist_ok=True)
         faiss.write_index(index, index_path)
-        pickle.dump(doc_ids, open(index_path + "_ids.pkl", 'wb'))
+        pickle.dump(doc_ids, open(index_path + "doc_ids.pkl", 'wb'))
         self.logger.info(f"Saved FAISS exact index and doc IDs to {index_path}")
 
     def embed_doc_batches_db(self, texts_csv_path='', index_path='', inference_batch_size=None, prompt = ''):

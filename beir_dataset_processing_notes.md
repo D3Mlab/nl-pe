@@ -31,3 +31,6 @@ embedding:
   init_index_path: data/ir/beir/nfcorpus/gemini-3072/faiss/index
   matryoshka_dim: 48
 ```
+
+5. Embedding queries
+*index_doc_ids.pkl will be the suffix -- keep it, some legacy index_ids.pkl may need an update

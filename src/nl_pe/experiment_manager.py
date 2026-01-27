@@ -115,6 +115,7 @@ class ExperimentManager():
                     self.write_query_result_ir(qid, result)
                 else:
                     self.logger.error(f'Failed to rank query {qid} -- empty result[\'top_k_psgs\']')
+                    raise
 
             except Exception as e:
                 self.logger.error(f'Failed to rank or write results for query {qid}: {str(e)}')
@@ -127,7 +128,6 @@ class ExperimentManager():
         self.logger.info("Starting GP Inference speed experiment...")
         gp = GPInference(self.config)
         gp.run_inference()
-
 
     def fit_hyperpriors(self):
         self.logger.info(f"Starting hyperparam fitting in {self.exp_dir}")
