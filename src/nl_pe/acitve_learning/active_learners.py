@@ -218,6 +218,7 @@ class GPActiveLearner(BaseActiveLearner):
         state["acquisition_scores"] = []
         state["acquisition_times"] = []
         state["acquisition_IO_times"] = []
+        state["acquisition_sort_times"] = []
         state["model_update_times"] = []
         state["neg_mll"] = []
         state["lengthscale"] = []
@@ -331,7 +332,7 @@ class GPActiveLearner(BaseActiveLearner):
             )
 
             # Get acquisition scores for all docs except observed
-            top_idxs, top_scores, acq_gp_time, acq_io_time = self.compute_acquisition_scores(
+            top_idxs, top_scores, acq_gp_time, acq_io_time, acc_sort_time = self.compute_acquisition_scores(
                 model,
                 observed_mask_cpu,
                 acq_func_name,
@@ -349,6 +350,8 @@ class GPActiveLearner(BaseActiveLearner):
             state["acquisition_scores"].append(acq_score)
             state["acquisition_times"].append(acq_gp_time)
             state["acquisition_IO_times"].append(acq_io_time)
+            state["acquisition_sort_times"].append(acc_sort_time)
+
             observed_mask_cpu[selected_idx] = True
 
             # Get label for selected doc
@@ -418,6 +421,7 @@ class GPActiveLearner(BaseActiveLearner):
         inc_indices = None  # CPU tensor, shape (<=k_acq,)
         total_io_time = 0.0
         total_gp_time = 0.0
+        total_sort_time = 0.0
 
         # For other methods, batch process
         with torch.no_grad(), self.fast_ctx:
@@ -453,6 +457,7 @@ class GPActiveLearner(BaseActiveLearner):
                 #apply mask to observed cands
                 scores[batch_obs] = float("-inf")
 
+                sort_start = time.time()
                 k_here = min(k_acq, scores.numel())
                 batch_top_scores, batch_top_local = torch.topk(scores, k=k_here, largest=True)
                 batch_top_global = batch_top_local + start
@@ -470,8 +475,9 @@ class GPActiveLearner(BaseActiveLearner):
                     k_merge = min(k_acq, merged_scores.numel())
                     inc_scores, pos = torch.topk(merged_scores, k=k_merge, largest=True)
                     inc_indices = merged_indices[pos]
+                total_sort_time += time.time() - sort_start
 
-        return inc_indices.tolist(), inc_scores.tolist(), total_gp_time, total_io_time
+        return inc_indices.tolist(), inc_scores.tolist(), round(total_gp_time,3), round(total_io_time,3), round(total_sort_time,3)
 
 
     def _ts_batch(self, model, batch_embs):
@@ -574,7 +580,7 @@ class GPActiveLearner(BaseActiveLearner):
         self._maybe_refit_gp(state, model, likelihood, X_obs, y_obs)
 
         elapsed = time.time() - start
-        state["model_update_times"].append(elapsed)
+        state["model_update_times"].append(round(elapsed,3))
 
         model.eval()
         likelihood.eval()
