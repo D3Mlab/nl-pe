@@ -580,3 +580,4 @@ data/
 trials
 coding_prompts/
 dataset_notes.xlsx
+notebooks/parameter_writer.html
