@@ -115,10 +115,11 @@ class ExperimentManager():
                     self.write_query_result_ir(qid, result)
                 else:
                     self.logger.error(f'Failed to rank query {qid} -- empty result[\'top_k_psgs\']')
-                    raise
+                    raise RuntimeError(f"Empty top_k_psgs for query {qid}")
 
             except Exception as e:
                 self.logger.error(f'Failed to rank or write results for query {qid}: {str(e)}')
+                raise
 
     def gen_qs(self):
         q_generator = QueryGenerator(self.config)

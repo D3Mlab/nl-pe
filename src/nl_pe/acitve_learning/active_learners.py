@@ -345,6 +345,10 @@ class GPActiveLearner(BaseActiveLearner):
                 k_acq=k_acq,
             )
 
+            del model, likelihood
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
             #TODO, adapt to batching
             selected_idx = top_idxs[0]
             acq_score = top_scores[0]
@@ -417,7 +421,10 @@ class GPActiveLearner(BaseActiveLearner):
 
         self.logger.debug(f"Final ranked list created with top 5 docs: {state['top_k_psgs'][:5]}")
 
-        
+        del model, likelihood
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    
     def compute_acquisition_scores(self, model, observed_mask_cpu, acq_func_name, k_acq=1):
         self.logger.debug(f"Computing acquisition scores using '{acq_func_name}'")
         n_total = self.d_embs_cpu.shape[0]
