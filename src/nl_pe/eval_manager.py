@@ -23,6 +23,10 @@ class EvalManager:
         self.qrels_dict = self.load_pytrec_eval_qrels(self.qrels_path)
         self.results_dir = Path(self.eval_dir) / "per_query_results"
 
+        #check if all test queries in qrels are present in results_dir
+        self.test_queries_path = Path(self.qrels_path).parent.parent / "test_queries.csv"
+        self.check_test_query_coverage()
+
         # Load method lists from config
         self.per_query_methods = self.config.get("per_query_methods", [])
         self.all_query_methods = self.config.get("all_query_methods", [])
@@ -202,6 +206,63 @@ class EvalManager:
 
     def setup_logger(self):
         self.logger = setup_logging(self.__class__.__name__, self.config, output_file=os.path.join(self.eval_dir, "evaluation.log"))
+
+    def check_test_query_coverage(self):
+        """
+        Check that all test query ids from test_queries.csv exist as subdirectories
+        in results_dir. Logs info if all present, warning for each missing query.
+        """
+
+        if not self.test_queries_path.exists():
+            self.logger.warning(f"test_queries.csv not found at {self.test_queries_path} — skipping coverage check.")
+            raise FileNotFoundError(f"test_queries.csv not found at {self.test_queries_path}")
+
+        if not self.results_dir.exists():
+            self.logger.warning(f"Results dir {self.results_dir} does not exist — skipping coverage check.")
+            raise FileNotFoundError(f"Results dir {self.results_dir} does not exist")
+
+        # ---- load expected qids from csv (first column, header-aware) ----
+        expected_qids = []
+        try:
+            with open(self.test_queries_path, newline="") as f:
+                reader = csv.reader(f)
+                header = next(reader, None)  # skip header
+                for row in reader:
+                    if not row:
+                        continue
+                    expected_qids.append(str(row[0]).strip())
+        except Exception as e:
+            self.logger.error(f"Failed reading test_queries.csv at {self.test_queries_path}: {e}")
+            return
+
+        expected_qids_set = set(expected_qids)
+
+        # ---- collect result qids from directory names ----
+        result_qids_set = {
+            p.name for p in self.results_dir.iterdir()
+            if p.is_dir()
+        }
+
+        # ---- compare ----
+        missing = sorted(expected_qids_set - result_qids_set)
+        extra = sorted(result_qids_set - expected_qids_set)
+
+        if not missing:
+            self.logger.info(
+                f"All {len(expected_qids_set)} test queries have result directories in {self.results_dir}."
+            )
+        else:
+            for qid in missing:
+                self.logger.warning(
+                    f"Missing results directory for test query id: {qid}"
+                )
+
+        if extra:
+            for qid in extra:
+                self.logger.warning(
+                    f"Results directory present but not in test_queries.csv: {qid}"
+                )
+
 
 
 if __name__ == "__main__":
