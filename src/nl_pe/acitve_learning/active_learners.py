@@ -279,7 +279,7 @@ class GPActiveLearner(BaseActiveLearner):
                         n_warm = 1  # at least one warm-start doc if percent > 0
 
                 n_warm = min(n_warm, n_candidates)
-                warm_start_doc_ids = top_k_psgs[:n_warm]
+                warm_start_doc_ids = [str(d_id) for d_id in top_k_psgs[:n_warm]]
 
                 self.logger.info(
                     f"Warm start enabled: percent={warm_start_percent}, "

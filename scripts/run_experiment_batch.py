@@ -17,7 +17,7 @@ def run_experiment_batch(batch_dir, exp_type):
     # Run each experiment using subprocess with new cmd line interface
     for exp_dir in exp_dirs:
         print(f"Running {exp_type} in directory: {exp_dir}")
-        subprocess.run([sys.executable, 'src/nl_pe/experiment_manager.py', '-c', exp_dir, '-e', exp_type], cwd='.')
+        subprocess.run([sys.executable, 'src/nl_pe/experiment_manager.py', '-c', exp_dir, '-e', exp_type], cwd='.',check=True)
 
 
 if __name__ == "__main__":
