@@ -33,4 +33,4 @@ embedding:
 ```
 
 5. Embedding queries
-*index_doc_ids.pkl will be the suffix -- keep it, some legacy index_ids.pkl may need an update
+*index_doc_ids.pkl will be the suffix -- keep it, some legacy index_ids.pkl may need an update FOR reformulated query embeddings only

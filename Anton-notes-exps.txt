@@ -1,3 +1,7 @@
+Jan 29:
+could try alt webis touche -- https://github.com/castorini/touche-error-analysis from jimmy
+
+W
 near term gp experiments (nov 23):
 -----
 - dense with gemini full, 48

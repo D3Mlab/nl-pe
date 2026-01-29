@@ -168,7 +168,8 @@ class EvalManager:
                 if knn_time is not None:
                     self.all_query_knn_times[self.curr_qid] = knn_time
                 else:
-                    self.logger.warning(f"Query {self.curr_qid}: knn_time not found in detailed_results.json")
+                    pass
+                    #self.logger.debug(f"Query {self.curr_qid}: knn_time not found in detailed_results.json")
         except FileNotFoundError:
             self.logger.error(f"Query {self.curr_qid}: detailed_results.json file not found at {self.curr_query_detailed_results_path}")
         except json.JSONDecodeError as e:
@@ -177,7 +178,7 @@ class EvalManager:
     def write_all_queries_knn_times(self):
         #write a csv file all_queries_knn_times.csv with two columns: qid, knn_time based on self.all_query_knn_times
         if not self.all_query_knn_times:
-            self.logger.warning("No KNN times found to write to CSV")
+        #    self.logger.warning("No KNN times found to write to CSV")
             return
 
         csv_path = Path(self.eval_dir) / "all_queries_knn_times.csv"

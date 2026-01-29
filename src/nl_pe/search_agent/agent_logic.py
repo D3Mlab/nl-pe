@@ -13,7 +13,7 @@ class AgentLogic():
 
     def gt_rel_oracle(self, state):
         self.logger.debug(f"State keys: {list(state.keys())}")
-        pid_list = state['current_batch']
+        pid_list = [str(pid) for pid in state['current_batch']]
         self.logger.debug(f"Current batch pid_list head: {pid_list[:10]}")
         qrels_path = self.data_config.get('qrels_path')
         self.logger.debug(f"Qrels path: {qrels_path}")

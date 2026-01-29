@@ -26,6 +26,7 @@ class BaseActiveLearner(ABC):
         self.logger.info(f"Using device: {self.device}")
 
     def get_single_rel_judgment(self, state, doc_id):
+        doc_id = str(doc_id)
         self.logger.debug(f"Getting relevance judgment for doc_id {doc_id} with qid {state.get('qid', 'unknown')}")
         if not hasattr(self, 'qrels_map'):
             data_config = self.config.get('data', {})
@@ -63,7 +64,12 @@ class GPActiveLearner(BaseActiveLearner):
         self.d_embs_cpu = torch.from_numpy(self.index.reconstruct_n(0, self.index.ntotal)).float()
         del self.index
         doc_ids_path = data_config.get('doc_ids_path')
-        self.doc_ids = pickle.load(open(doc_ids_path, 'rb'))
+        
+        #read doc ids as strings
+        doc_ids_path = data_config.get('doc_ids_path')
+        raw_doc_ids = pickle.load(open(doc_ids_path, 'rb'))
+        self.doc_ids = [str(d) for d in raw_doc_ids]   # <-- KEY FIX
+
         self.embedding_batch_size = data_config.get('embedding_batch_size', len(self.doc_ids))
 
         # GP config
