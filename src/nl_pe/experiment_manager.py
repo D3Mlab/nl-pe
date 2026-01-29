@@ -417,12 +417,13 @@ class ExperimentManager():
         #load doc embeddings to tensor
         index_path = self.config.get('data').get('index_path')
         index = faiss.read_index(index_path)
-        d_embs_np = index.reconstruct_n(0, index.ntotal) 
-        d_embs = torch.from_numpy(d_embs_np).float()   #shape: (N, D)   
+        d_embs_np = index.reconstruct_n(0, index.ntotal)
+        d_embs = torch.from_numpy(d_embs_np).float()   #shape: (N, D)
         self.logger.info(f'loaded doc embeddings with shape {d_embs.shape}')
         #load doc_ids
         doc_ids_path = self.config.get('data').get('doc_ids_path')
         doc_ids = pickle.load(open(doc_ids_path, 'rb'))
+        doc_ids = [str(d) for d in doc_ids]
         return doc_ids, d_embs
 
     def _get_qids_and_embs(self):
@@ -430,6 +431,7 @@ class ExperimentManager():
         queries_csv_path = self.data_config.get("queries_csv_path")
         qdf = pd.read_csv(queries_csv_path)
         qids = qdf.iloc[:, 0].tolist()
+        qids = [str(q) for q in qids]
         self.logger.info(f"Loaded {len(qids)} training queries")
 
         #load query embeddings to tensor
@@ -521,6 +523,7 @@ class ExperimentManager():
 
         with open(doc_ids_path, 'rb') as f:
             doc_ids = pickle.load(f)
+        doc_ids = [str(d) for d in doc_ids]
 
         index_path = self.data_config.get('index_path')
         index = faiss.read_index(index_path)
@@ -542,6 +545,7 @@ class ExperimentManager():
         queries_csv_path = self.data_config.get("queries_csv_path")
         qdf = pd.read_csv(queries_csv_path)
         all_qids = qdf.iloc[:, 0].tolist()
+        all_qids = [str(q) for q in all_qids]
         self.logger.info(f"Loaded {len(all_qids)} training queries")
 
         # -------------------------
@@ -695,6 +699,7 @@ class ExperimentManager():
         #unpickle to get doc ids, its in the same order as the faiss index
         with open(doc_ids_path, 'rb') as f:
             doc_ids = pickle.load(f)
+        doc_ids = [str(d) for d in doc_ids]
 
         #path to faiss index
         index_path = self.data_config.get('index_path')
@@ -716,6 +721,7 @@ class ExperimentManager():
         queries_csv_path = self.data_config.get("queries_csv_path")
         qdf = pd.read_csv(queries_csv_path)
         curr_qid = qdf.iloc[1, 0]
+        curr_qid = str(curr_qid)
         self.logger.info(f"Using first query ID: {curr_qid}")
 
         qrels_path = self.data_config.get("qrels_path")

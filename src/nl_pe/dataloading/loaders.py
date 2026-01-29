@@ -96,9 +96,9 @@ class PyseriniLoader(BaseLoader):
         with open(run_path, 'r') as f:
             for line in f:
                 qid, _, _, _, _, _ = line.strip().split()
-                qid = int(qid)
+                qid = str(qid)
                 if qid not in seen_qids:
-                    query_list.append({'qid': qid, 'text': topics[qid]['title']})
+                    query_list.append({'qid': qid, 'text': topics[str(qid)]['title']})
                     seen_qids.add(qid)
         return query_list
 

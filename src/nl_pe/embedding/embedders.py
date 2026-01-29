@@ -65,6 +65,7 @@ class BaseEmbedder(ABC):
         self.logger.debug(f"Reading texts from CSV: {texts_csv_path}")
         df = pd.read_csv(texts_csv_path, header=0)
         doc_ids = df.iloc[:, 0].tolist()
+        doc_ids = [str(d) for d in doc_ids]
         texts = df.iloc[:, 1].tolist()
         self.logger.debug(f"First 3 texts: {texts[:3]}... ")
 
@@ -85,7 +86,7 @@ class BaseEmbedder(ABC):
 
         all_embeddings = torch.cat(all_embeddings, dim=0)
         self.logger.debug(f"Final embeddings shape: {all_embeddings.shape}, device: {all_embeddings.device}")
-        
+
         # Save tensor directly from GPU
         self.logger.debug(f"Saving embeddings tensor (device: {all_embeddings.device}) to {index_path}")
         os.makedirs(os.path.dirname(index_path), exist_ok=True)
@@ -98,6 +99,7 @@ class BaseEmbedder(ABC):
         self.logger.debug(f"Creating FAISS index from {texts_csv_path}")
         df = pd.read_csv(texts_csv_path, header=0)
         doc_ids = df.iloc[:, 0].tolist()
+        doc_ids = [str(d) for d in doc_ids]
         texts = df.iloc[:, 1].tolist()
 
         num_docs = len(texts)
@@ -152,6 +154,7 @@ class BaseEmbedder(ABC):
             for i in range(0, num_docs, inference_batch_size):
                 batch_df = df.iloc[i:i + inference_batch_size]
                 doc_ids_batch = batch_df.iloc[:, 0].tolist()
+                doc_ids_batch = [str(d) for d in doc_ids_batch]
                 texts = batch_df.iloc[:, 1].tolist()
 
                 self.logger.debug(f"Processing shelve batch {i//inference_batch_size + 1}/{(num_docs + inference_batch_size - 1) // inference_batch_size} with {len(texts)} documents")
