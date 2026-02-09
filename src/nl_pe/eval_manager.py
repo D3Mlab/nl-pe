@@ -225,7 +225,7 @@ class EvalManager:
         # ---- load expected qids from csv (first column, header-aware) ----
         expected_qids = []
         try:
-            with open(self.test_queries_path, newline="") as f:
+            with open(self.test_queries_path, newline="", encoding="utf-8") as f:
                 reader = csv.reader(f)
                 header = next(reader, None)  # skip header
                 for row in reader:

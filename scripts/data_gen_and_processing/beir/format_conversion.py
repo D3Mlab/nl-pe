@@ -41,12 +41,13 @@ def process_corpus_to_docs(corpus_path, docs_path):
                 d_id = data['_id']
                 title = data.get('title', '')
                 text = data.get('text', '')
-                d_text = f"Title: {title} Text:{text}"
+                d_text = f"Title: {title} Text: {text}"
                 writer.writerow([d_id, d_text])
     print(f"Converted {corpus_path} to {docs_path}")
 
 def process_queries_to_csv(queries_path, train_ids=None, test_ids=None, train_queries_path=None, test_queries_path=None, queries_csv_path=None):
     """Convert queries.jsonl to test_queries.csv, or split into train_queries.csv and test_queries.csv if train_ids and test_ids provided."""
+    is_webis_touche = 'webis-touche2020' in os.path.dirname(queries_path)
     queries_data = []
     with open(queries_path, 'r', encoding='utf-8') as f_in:
         for line in f_in:
@@ -54,7 +55,10 @@ def process_queries_to_csv(queries_path, train_ids=None, test_ids=None, train_qu
             if line:
                 data = json.loads(line)
                 q_id = data['_id']
-                q_text = data['text']
+                if is_webis_touche:
+                    q_text = f"{data['text']} {data['metadata']['description']} {data['metadata']['narrative']}"
+                else:
+                    q_text = data['text']
                 queries_data.append((q_id, q_text))
     
     if train_ids is not None and test_ids is not None and train_queries_path and test_queries_path:

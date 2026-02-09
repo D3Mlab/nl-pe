@@ -34,3 +34,7 @@ embedding:
 
 5. Embedding queries
 *index_doc_ids.pkl will be the suffix -- keep it, some legacy index_ids.pkl may need an update FOR reformulated query embeddings only
+
+
+6.  Generate query reformulations
+python scripts\run_experiment_batch.py -e gen_qs -c <path to query reforumlation config>
