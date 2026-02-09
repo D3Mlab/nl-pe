@@ -175,37 +175,6 @@ class GPActiveLearner(BaseActiveLearner):
         use_query_reforms = str(self.gp_config.get('use_query_reformulations', False)).lower() in ("1", "true", "yes", "y")
         reform_query_rel_label = self.gp_config.get('reform_query_rel_label')
 
-        #overwrite hyperparams if reading from csv
-        hypers_csv = self.gp_config.get("set_hypers_csv")
-        if hypers_csv is not None:
-            df = pd.read_csv(hypers_csv)
-            last_row = df.iloc[-1]
-
-            # force ARD
-            self.ard = True
-
-            # extract lengthscales (ordered by suffix)
-            ls_cols = sorted(
-                [c for c in df.columns if c.startswith("lengthscale_")],
-                key=lambda x: int(x.split("_")[-1])
-            )
-            lengthscale = torch.tensor(
-                [last_row[c] for c in ls_cols],
-                dtype=torch.float32,
-            ).unsqueeze(0)   # shape: (1, D)
-
-
-            signal_noise = float(last_row["sig_noise"])
-            observation_noise = float(last_row["obs_noise"])
-
-            self.logger.info(
-                f"Loaded GP hypers from CSV {hypers_csv}: "
-                f"ARD lengthscale dim={len(lengthscale)}, "
-                f"sig_noise={signal_noise}, obs_noise={observation_noise}"
-            )
-
-
-
         #warm start percent: none or 0 to 100      
         warm_start_percent = float(self.gp_config.get('warm_start_percent', 0))
 
