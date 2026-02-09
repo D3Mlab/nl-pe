@@ -1,6 +1,7 @@
 from abc import ABC
 from contextlib import nullcontext
 from nl_pe.utils.setup_logging import setup_logging
+from nl_pe.utils.qrels import load_qrels_map
 import os
 import torch
 import gpytorch
@@ -34,16 +35,7 @@ class BaseActiveLearner(ABC):
             if not qrels_path:
                 self.logger.error("Qrels path not specified in data config")
                 raise ValueError("Qrels path not specified in data config")
-            self.qrels_map = {}
-            with open(qrels_path, 'r') as f:
-                for line in f:
-                    parts = line.strip().split()
-                    if len(parts) >= 4:
-                        qid, _, pid, rel = parts[0], parts[1], parts[2], parts[3]
-                        rel = float(rel)
-                        if qid not in self.qrels_map:
-                            self.qrels_map[qid] = {}
-                        self.qrels_map[qid][pid] = rel
+            self.qrels_map = load_qrels_map(qrels_path)
             self.logger.debug(f"Loaded qrels for {len(self.qrels_map)} queries")
         qid = str(state['qid'])
         judgment = self.qrels_map.get(qid, {}).get(doc_id, 0)
@@ -620,6 +612,7 @@ class ExactGPModel(gpytorch.models.ExactGP):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
 
 
 

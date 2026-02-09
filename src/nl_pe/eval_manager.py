@@ -8,6 +8,7 @@ import numpy as np
 from scipy.stats import norm
 from nl_pe.utils.setup_logging import setup_logging
 from nl_pe.utils.utils import get_doc_text_list
+from nl_pe.utils.qrels import load_pytrec_eval_qrels
 from pathlib import Path
 
 
@@ -20,7 +21,7 @@ class EvalManager:
 
         self.selected_trec_measures = self.config.get("measures", pytrec_eval.supported_measures)
         self.qrels_path = self.config.get("qrels_path")
-        self.qrels_dict = self.load_pytrec_eval_qrels(self.qrels_path)
+        self.qrels_dict = load_pytrec_eval_qrels(self.qrels_path)
         self.results_dir = Path(self.eval_dir) / "per_query_results"
 
         #check if all test queries in qrels are present in results_dir
@@ -101,10 +102,6 @@ class EvalManager:
         if self.config.get('write_per_q_files'):
             curr_query_trec_eval_results_path = Path(self.curr_query_dir) / "trec_eval_results.jsonl"
             self.write_query_trec_jsonl(curr_query_trec_eval_results_path, per_query_eval_results)
-
-    def load_pytrec_eval_qrels(self,qrels_path):
-        with open(qrels_path, "r") as qrels_file:
-            return pytrec_eval.parse_qrel(qrels_file)
 
     def deduplicate_trec_results(self):
         if not self.curr_trec_file_path.exists() or self.curr_trec_file_path.stat().st_size == 0:
