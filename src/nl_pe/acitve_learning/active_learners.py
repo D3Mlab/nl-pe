@@ -26,9 +26,13 @@ class BaseActiveLearner(ABC):
         self.device = torch.device('cuda' if tensor_ops_device == 'gpu' and torch.cuda.is_available() else 'cpu')
         self.logger.info(f"Using device: {self.device}")
 
-    def get_single_rel_judgment(self, state, doc_id):
-        doc_id = str(doc_id)
-        self.logger.debug(f"Getting relevance judgment for doc_id {doc_id} with qid {state.get('qid', 'unknown')}")
+    def get_rel_judgments(self, state, doc_ids):
+        doc_ids = [str(doc_id) for doc_id in doc_ids]
+        self.logger.debug(
+            "Getting relevance judgments for %d doc_ids with qid %s",
+            len(doc_ids),
+            state.get('qid', 'unknown'),
+        )
         if not hasattr(self, 'qrels_map'):
             data_config = self.config.get('data', {})
             qrels_path = data_config.get('qrels_path')
@@ -38,9 +42,10 @@ class BaseActiveLearner(ABC):
             self.qrels_map = load_qrels_map(qrels_path)
             self.logger.debug(f"Loaded qrels for {len(self.qrels_map)} queries")
         qid = str(state['qid'])
-        judgment = self.qrels_map.get(qid, {}).get(doc_id, 0)
-        self.logger.debug(f"Relevance judgment for doc_id {doc_id} is {judgment}")
-        return judgment
+        rel_map = self.qrels_map.get(qid, {})
+        judgments = [rel_map.get(doc_id, 0) for doc_id in doc_ids]
+        self.logger.debug("Batch relevance judgments head: %s", judgments[:10])
+        return judgments
 
 
 class GPActiveLearner(BaseActiveLearner):
@@ -282,6 +287,8 @@ class GPActiveLearner(BaseActiveLearner):
                 docid_to_idx = {d_id: i for i, d_id in enumerate(self.doc_ids)}
 
                 warm_added = 0
+                warm_doc_ids = []
+                warm_doc_indices = []
                 for d_id in warm_start_doc_ids:
                     idx = docid_to_idx.get(d_id, None)
                     if idx is None:
@@ -289,18 +296,24 @@ class GPActiveLearner(BaseActiveLearner):
                             f"Warm start doc_id {d_id} not found in loaded doc_ids; skipping."
                         )
                         continue
+                    warm_doc_ids.append(d_id)
+                    warm_doc_indices.append(idx)
 
-                    # Get label and embedding
-                    y_new = self.get_single_rel_judgment(state, d_id)
-                    X_new = self.d_embs_cpu[idx].unsqueeze(0).to(self.device)
+                if warm_doc_ids:
+                    warm_labels = self.get_rel_judgments(state, warm_doc_ids)
+                    for d_id, idx, y_new in zip(warm_doc_ids, warm_doc_indices, warm_labels):
+                        X_new = self.d_embs_cpu[idx].unsqueeze(0).to(self.device)
 
-                    # Update observations and selected docs
-                    X_obs = torch.cat([X_obs, X_new], dim=0)
-                    y_obs = torch.cat([y_obs, torch.tensor([y_new], dtype=torch.float32).to(self.device)], dim=0)
-                    state["selected_doc_ids"].append(d_id)
-                    state["observed_scores"].append(float(y_new))
-                    observed_mask_cpu[idx] = True
-                    warm_added += 1
+                        # Update observations and selected docs
+                        X_obs = torch.cat([X_obs, X_new], dim=0)
+                        y_obs = torch.cat(
+                            [y_obs, torch.tensor([y_new], dtype=torch.float32).to(self.device)],
+                            dim=0,
+                        )
+                        state["selected_doc_ids"].append(d_id)
+                        state["observed_scores"].append(float(y_new))
+                        observed_mask_cpu[idx] = True
+                        warm_added += 1
 
                 # Reduce the number of AL iterations by the number of warm-start observations
                 if warm_added > 0:
@@ -316,9 +329,12 @@ class GPActiveLearner(BaseActiveLearner):
                         "keeping original number of active learning iterations."
                     )
 
-        # BO iterations
-        for iteration in range(remaining_obs_post_ws):
-            self.logger.debug(f"Active learning iteration {iteration + 1}/{remaining_obs_post_ws}")
+        # BO iterations (batch acquisitions)
+        total_batches = math.ceil(remaining_obs_post_ws / max(k_acq, 1))
+        for iteration in range(total_batches):
+            self.logger.debug(
+                f"Active learning iteration {iteration + 1}/{total_batches}"
+            )
 
             model, likelihood = self._build_and_maybe_refit_gp(
                 state,
@@ -341,30 +357,36 @@ class GPActiveLearner(BaseActiveLearner):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-            #TODO, adapt to batching
-            selected_idx = top_idxs[0]
-            acq_score = top_scores[0]
-            selected_doc_id = self.doc_ids[selected_idx]
-            self.logger.debug(f"Selected document {selected_doc_id} with acquisition score {acq_score:.4f}")
+            # Batch update for top-k acquisitions
+            remaining_slots = remaining_obs_post_ws - (iteration * k_acq)
+            batch_size = min(len(top_idxs), remaining_slots)
+            selected_indices = top_idxs[:batch_size]
+            selected_doc_ids = [self.doc_ids[idx] for idx in selected_indices]
+            self.logger.debug(
+                "Selected %d documents for acquisition (head=%s)",
+                len(selected_doc_ids),
+                selected_doc_ids[:5],
+            )
 
-            # Record
-            state["selected_doc_ids"].append(selected_doc_id)
-            state["acquisition_scores"].append(acq_score)
+            # Record acquisition metadata (store all scores returned for this step)
+            state["selected_doc_ids"].extend(selected_doc_ids)
+            state["acquisition_scores"].extend(top_scores[:batch_size])
             state["acquisition_times"].append(acq_gp_time)
             state["acquisition_IO_times"].append(acq_io_time)
             state["acquisition_sort_times"].append(acc_sort_time)
 
-            observed_mask_cpu[selected_idx] = True
+            for idx in selected_indices:
+                observed_mask_cpu[idx] = True
 
-            # Get label for selected doc
-            y_new = self.get_single_rel_judgment(state, selected_doc_id)
-            state["observed_scores"].append(float(y_new))
-            self.logger.debug(f"Retrieved relevance label {y_new} for document {selected_doc_id}")
+            # Get labels for selected docs (batch)
+            y_new_batch = self.get_rel_judgments(state, selected_doc_ids)
+            state["observed_scores"].extend([float(y_new) for y_new in y_new_batch])
 
-            # Update observations
-            X_new = self.d_embs_cpu[selected_idx].unsqueeze(0).to(self.device)
+            # Update observations with batch
+            X_new = self.d_embs_cpu[selected_indices].to(self.device)
+            y_new_tensor = torch.tensor(y_new_batch, dtype=torch.float32).to(self.device)
             X_obs = torch.cat([X_obs, X_new], dim=0)
-            y_obs = torch.cat([y_obs, torch.tensor([y_new], dtype=torch.float32).to(self.device)], dim=0)
+            y_obs = torch.cat([y_obs, y_new_tensor], dim=0)
             self.logger.debug(f"Observations updated to {len(X_obs)} points")
 
         # Final model after all observations
@@ -612,6 +634,9 @@ class ExactGPModel(gpytorch.models.ExactGP):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
+
+
 
 
 
