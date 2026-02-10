@@ -80,84 +80,6 @@ class GPActiveLearner(BaseActiveLearner):
         if fast_pred:
             self.logger.info("Using fast_pred_var")
 
-    def _maybe_refit_gp(self, state, model, likelihood, train_x, train_y):
-
-        refit_after_obs = self.opt_config.get('refit_after_obs')
-        k_refit = int(self.opt_config.get('k_refit') or 0)
-        lr = self.opt_config.get('lr')
-        k_obs_refit = int(self.opt_config.get('k_obs_refit') or 1)
-        opt_noise = bool(self.opt_config.get("opt_noise", True))
-        opt_sig_noise = bool(self.opt_config.get("opt_sig_noise", True))
-
-
-        # Only refit if requested and k_refit > 0
-        if str(refit_after_obs).lower() not in ("1", "true", "y", "yes", "true"):
-            return
-        if k_refit is None or k_refit <= 0:
-            return
-
-        with torch.set_grad_enabled(True):
-            # ensure train tensors are real autograd tensors
-            train_x = train_x.clone()
-            train_y = train_y.clone()
-            
-            self.logger.debug(f"Refitting GP hyperparameters for {k_refit} steps")
-            model.train()
-            likelihood.train()
-
-            # Only refit every k_obs_refit observations
-            obs_count = train_x.size(0)
-            if k_obs_refit is not None and k_obs_refit > 1 and (obs_count % k_obs_refit != 0):
-                return
-
-            params = []
-
-            # optionally optimize outputscale (signal variance)
-            if opt_sig_noise:
-                params += list(model.covar_module.parameters())  # includes outputscale
-            else:
-                model.covar_module.raw_outputscale.requires_grad_(False)
-                # always optimize kernel lengthscales
-                params += list(model.covar_module.base_kernel.parameters())
-            # optionally optimize observation noise
-            if opt_noise:
-                params += list(likelihood.parameters())
-            else:
-                likelihood.raw_noise.requires_grad_(False)
-            optimizer = torch.optim.Adam(params, lr=lr)
-
-            mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-
-            for step in range(k_refit):
-                optimizer.zero_grad()
-                output = model(train_x)
-                loss = -mll(output, train_y)
-                neg_mll = loss.item()
-                state["neg_mll"].append(neg_mll)
-                self.logger.debug(f"Refit step {step + 1}/{k_refit}, -mll={neg_mll:.6f}")
-                loss.backward()
-                optimizer.step()
-
-            model.eval()
-            likelihood.eval()
-
-        # record only the final values after refit
-        with torch.no_grad():
-            ls_t = model.covar_module.base_kernel.lengthscale.detach().cpu()
-            if ls_t.numel() == 1:
-                ls = float(ls_t.item())
-            else:
-                ls = ls_t.squeeze().tolist()
-
-            sn = float(model.covar_module.outputscale.item())
-            on = float(likelihood.noise.item())
-
-        #state["neg_mll"].append(neg_mll)
-        state["lengthscale"].append(ls)
-        state["signal_noise"].append(sn)
-        state["obs_noise"].append(on)
-
-
     def active_learn(self, state):
         # Data already loaded in __init__
         self.logger.info(f"Using {len(self.doc_ids)} documents, batch_size={self.embedding_batch_size}")
@@ -180,7 +102,9 @@ class GPActiveLearner(BaseActiveLearner):
 
         # Active learning config
         self.al_config = self.config.get('active_learning', {})
-        acq_func_name = self.al_config.get('acquisition_f')
+        acq_func_name = self.al_config.get('acquisition_f') #low level af, eg UCB, greedy-epsilon, etc (could be used as a component in diversified acq like MMR, fantasy-UCB, etc)
+        acq_strategy_name = self.al_config.get('acquisition_strategy') #high-level acquisition strategy, eg 'batch_af','mmr_af', 'fantasy_af', etc which may use the low-level acquisition function as a component.
+        acq_strategy = getattr(self, acq_strategy_name)
         k_acq = int(self.al_config.get("k_acq", 1))  # how many top-k candidates each acquisition call returns
 
 
@@ -315,7 +239,8 @@ class GPActiveLearner(BaseActiveLearner):
             )
 
             # Get acquisition scores for all docs except observed
-            top_idxs, top_scores, acq_gp_time, acq_io_time, acc_sort_time = self.compute_acquisition_scores(
+            top_idxs, top_scores, = acq_strategy(
+                state,
                 model,
                 observed_mask_cpu,
                 acq_func_name,
@@ -323,13 +248,12 @@ class GPActiveLearner(BaseActiveLearner):
             )
 
             del model, likelihood
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
 
             # Batch update for top-k acquisitions
-            remaining_slots = remaining_obs_post_ws - (iteration * k_acq)
+            remaining_slots = remaining_obs_post_ws - (iteration * k_acq) #correct for last batch which may have fewer than k_acq slots
             batch_size = min(len(top_idxs), remaining_slots)
             selected_indices = top_idxs[:batch_size]
+
             selected_doc_ids = [self.doc_ids[idx] for idx in selected_indices]
             self.logger.debug(
                 "Selected %d documents for acquisition (head=%s)",
@@ -340,9 +264,6 @@ class GPActiveLearner(BaseActiveLearner):
             # Record acquisition metadata (store all scores returned for this step)
             state["selected_doc_ids"].extend(selected_doc_ids)
             state["acquisition_scores"].extend(top_scores[:batch_size])
-            state["acquisition_times"].append(acq_gp_time)
-            state["acquisition_IO_times"].append(acq_io_time)
-            state["acquisition_sort_times"].append(acc_sort_time)
 
             for idx in selected_indices:
                 observed_mask_cpu[idx] = True
@@ -408,7 +329,8 @@ class GPActiveLearner(BaseActiveLearner):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     
-    def compute_acquisition_scores(self, model, observed_mask_cpu, acq_func_name, k_acq=1):
+    def batch_af(self, state, model, observed_mask_cpu, acq_func_name, k_acq=1):
+
         self.logger.debug(f"Computing acquisition scores using '{acq_func_name}'")
         n_total = self.d_embs_cpu.shape[0]
         batch_size = self.embedding_batch_size
@@ -473,7 +395,41 @@ class GPActiveLearner(BaseActiveLearner):
                     inc_indices = merged_indices[pos]
                 total_sort_time += time.time() - sort_start
 
-        return inc_indices.tolist(), inc_scores.tolist(), round(total_gp_time,3), round(total_io_time,3), round(total_sort_time,3)
+        #record times - 'inner' since could be an outer af like fantasy-ucb
+        state["inner_acquisition_times"].append(round(total_gp_time,3))
+        state["inner_acquisition_IO_times"].append(round(total_io_time,3))
+        state["inner_acquisition_sort_times"].append(round(total_sort_time,3))
+
+        return inc_indices.tolist(), inc_scores.tolist()
+
+    def fantasy_af(self, state, model, observed_mask_cpu, acq_func_name, k_acq=1):
+        pass
+        #DEEPCOPY the model to pass into batch_af
+
+    def mmr_af(self, state,model, observed_mask_cpu, acq_func_name, k_acq=1):
+        pass 
+        #until we select k_acq cands, we greedily take the next candidate x that maximizes
+        #lambda * (af(x)) - (1-lambda) * max_{x' in selected} sim(x,x') 
+        # where af is the base acquisition function score for x  
+        # where sim is cosine similarity of the embeddings
+
+        #details
+        #read mmr lambda from config, via 'active_learning': {'mmr_lambda': mmr_lambda},
+        #call self.batch_af to get acquisition scores for all candidates (once, outside the greedy loop)
+        #the first candidate selected is the one with highest acquisition score (since no diversity penalty yet)
+
+        #then, we start a greedy loop for the remaining k_acq-1 candidates 
+        #in each step, we loop through the candidates we HAVE selected, and compute :
+        #for each selected candidate, the similarity to all possible unselected candidates, and store all results, then take the max  after all batches are done
+        # for now, assume we have a placeholder function that takes a set of selected and unseleected indicies 
+        # and (can use a mask) and cpu embeddings and the batch size (batch_size = self.embedding_batch_size) and returns what we want
+
+        #record timing:
+        #state["outer_acquisition_times"] time for the entire MMR loop
+        #state["mmr_knn_times"] #time that stores the TOTAL time spent computing the max sim to selected candidates across ALL batches and ALL greedy steps 
+    
+        #finally, match the return format of batch_af, which is a list of top-k indicies and scores
+
 
 
     def _ts_batch(self, model, batch_embs):
@@ -582,6 +538,84 @@ class GPActiveLearner(BaseActiveLearner):
         likelihood.eval()
 
         return model, likelihood
+
+    def _maybe_refit_gp(self, state, model, likelihood, train_x, train_y):
+
+        refit_after_obs = self.opt_config.get('refit_after_obs')
+        k_refit = int(self.opt_config.get('k_refit') or 0)
+        lr = self.opt_config.get('lr')
+        k_obs_refit = int(self.opt_config.get('k_obs_refit') or 1)
+        opt_noise = bool(self.opt_config.get("opt_noise", True))
+        opt_sig_noise = bool(self.opt_config.get("opt_sig_noise", True))
+
+
+        # Only refit if requested and k_refit > 0
+        if str(refit_after_obs).lower() not in ("1", "true", "y", "yes", "true"):
+            return
+        if k_refit is None or k_refit <= 0:
+            return
+
+        with torch.set_grad_enabled(True):
+            # ensure train tensors are real autograd tensors
+            train_x = train_x.clone()
+            train_y = train_y.clone()
+            
+            self.logger.debug(f"Refitting GP hyperparameters for {k_refit} steps")
+            model.train()
+            likelihood.train()
+
+            # Only refit every k_obs_refit observations
+            obs_count = train_x.size(0)
+            if k_obs_refit is not None and k_obs_refit > 1 and (obs_count % k_obs_refit != 0):
+                return
+
+            params = []
+
+            # optionally optimize outputscale (signal variance)
+            if opt_sig_noise:
+                params += list(model.covar_module.parameters())  # includes outputscale
+            else:
+                model.covar_module.raw_outputscale.requires_grad_(False)
+                # always optimize kernel lengthscales
+                params += list(model.covar_module.base_kernel.parameters())
+            # optionally optimize observation noise
+            if opt_noise:
+                params += list(likelihood.parameters())
+            else:
+                likelihood.raw_noise.requires_grad_(False)
+            optimizer = torch.optim.Adam(params, lr=lr)
+
+            mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+
+            for step in range(k_refit):
+                optimizer.zero_grad()
+                output = model(train_x)
+                loss = -mll(output, train_y)
+                neg_mll = loss.item()
+                state["neg_mll"].append(neg_mll)
+                self.logger.debug(f"Refit step {step + 1}/{k_refit}, -mll={neg_mll:.6f}")
+                loss.backward()
+                optimizer.step()
+
+            model.eval()
+            likelihood.eval()
+
+        # record only the final values after refit
+        with torch.no_grad():
+            ls_t = model.covar_module.base_kernel.lengthscale.detach().cpu()
+            if ls_t.numel() == 1:
+                ls = float(ls_t.item())
+            else:
+                ls = ls_t.squeeze().tolist()
+
+            sn = float(model.covar_module.outputscale.item())
+            on = float(likelihood.noise.item())
+
+        #state["neg_mll"].append(neg_mll)
+        state["lengthscale"].append(ls)
+        state["signal_noise"].append(sn)
+        state["obs_noise"].append(on)
+
 
 class ExactGPModel(gpytorch.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood, lengthscale, signal_noise, ard=False):
