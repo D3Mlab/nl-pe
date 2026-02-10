@@ -112,14 +112,12 @@ class GPActiveLearner(BaseActiveLearner):
         state["selected_doc_ids"] = []
         state["observed_scores"] = []
         state["acquisition_scores"] = []
-        state["acquisition_times"] = []
-        state["acquisition_IO_times"] = []
-        state["acquisition_sort_times"] = []
-        state["model_update_times"] = []
         state["neg_mll"] = []
         state["lengthscale"] = []
         state["signal_noise"] = []
         state["obs_noise"] = []
+        state["model_update_times"] = []
+
 
         n_total = self.d_embs_cpu.shape[0]
         observed_mask_cpu = torch.zeros(n_total, dtype=torch.bool) #track which of the doc indicies have been observed
@@ -395,10 +393,20 @@ class GPActiveLearner(BaseActiveLearner):
                     inc_indices = merged_indices[pos]
                 total_sort_time += time.time() - sort_start
 
+
+        if "inner_acquisition_times" not in state:
+            state["inner_acquisition_times"] = []
+        if "inner_acquisition_IO_times" not in state:
+            state["inner_acquisition_IO_times"] = []
+        if "inner_acquisition_sort_times" not in state:
+            state["inner_acquisition_sort_times"] = []
+
         #record times - 'inner' since could be an outer af like fantasy-ucb
         state["inner_acquisition_times"].append(round(total_gp_time,3))
         state["inner_acquisition_IO_times"].append(round(total_io_time,3))
         state["inner_acquisition_sort_times"].append(round(total_sort_time,3))
+
+
 
         return inc_indices.tolist(), inc_scores.tolist()
 
@@ -430,6 +438,135 @@ class GPActiveLearner(BaseActiveLearner):
     
         #finally, match the return format of batch_af, which is a list of top-k indicies and scores
 
+        """
+        Exact greedy MMR.
+
+        Algorithm:
+            1. Compute base acquisition scores ONCE for all candidates.
+            2. Select the first candidate purely via AF (no diversity penalty).
+            3. For each newly selected candidate:
+                - run ONE batched similarity sweep against all docs
+                - update max_sim
+                - recompute MMR scores
+                - select next
+
+        IMPORTANT:
+            We perform exactly ONE KNN-style similarity pass per selected document.
+        """
+
+        outer_start = time.time()
+        mmr_lambda = float(self.al_config.get("mmr_lambda"))
+
+        n_total = self.d_embs_cpu.shape[0]
+        batch_size = self.embedding_batch_size
+
+        ##########################################################
+        # 1. Compute base AF scores ONCE (already batched internally)
+        ##########################################################
+
+        base_idxs, base_scores = self.batch_af(
+            state,
+            model,
+            observed_mask_cpu,
+            acq_func_name,
+            k_acq=n_total,   # safe: batch_af streams embeddings
+        )
+
+        # rebuild dense AF tensor
+        af_scores = torch.full((n_total,), float("-inf"), dtype=torch.float32)
+        af_scores[base_idxs] = torch.tensor(base_scores) #af_scores now follows order of doc indicies, with -inf for observed cands and actual scores for unobserved cands
+
+        ##########################################################
+        # 2. Initialize MMR state
+        ##########################################################
+
+        selected = []
+        selected_scores = []
+
+        available_mask = ~observed_mask_cpu.clone() #flips observed_mask to get available mask, which we will update as we select candidates
+
+        # tracks max similarity to ANY selected doc
+        max_sim = torch.zeros(n_total, dtype=torch.float32)
+
+        mmr_knn_time = 0.0
+
+        num_to_select = min(k_acq, int(available_mask.sum().item()))
+
+        ##########################################################
+        # 3. FIRST PICK — PURE AF (no similarity yet)
+        ##########################################################
+
+        masked_af = af_scores.masked_fill(~available_mask, float("-inf"))
+        next_idx = int(torch.argmax(masked_af).item())
+
+        selected.append(next_idx)
+        selected_scores.append(float(af_scores[next_idx]))
+        available_mask[next_idx] = False
+
+        ##########################################################
+        # 4. Remaining picks (k_acq - 1)
+        #    ONE similarity sweep per selected candidate
+        ##########################################################
+
+        for _ in range(num_to_select - 1):
+
+            knn_start = time.time()
+
+            # vector of newly selected document
+            picked_vec = self.d_embs_cpu[next_idx:next_idx+1].to(self.device) #torch tensor shape (1, d) for matmul
+
+            with torch.no_grad():
+
+                # batched matrix mult against ALL documents
+                for start in range(0, n_total, batch_size):
+                    end = min(start + batch_size, n_total)
+
+                    chunk = self.d_embs_cpu[start:end].to(self.device) #[B, d]
+
+                    # cosine == dot if embeddings are normalized
+                    sims = torch.matmul(chunk, picked_vec.T).squeeze(1) #[B]
+
+                    # update running maximum similarity
+                    max_sim[start:end] = torch.maximum(
+                        max_sim[start:end], 
+                        sims.cpu()
+                    ) #elemntwise max to update max_sim with the new sims if they are higher for the slice of candidates in this batch
+
+                    del chunk, sims
+
+            mmr_knn_time += time.time() - knn_start
+
+            ######################################################
+            # Compute MMR scores and select next
+            ######################################################
+
+            mmr_scores = mmr_lambda * af_scores - (1 - mmr_lambda) * max_sim
+            mmr_scores[~available_mask] = float("-inf")
+
+            next_idx = int(torch.argmax(mmr_scores).item())
+
+            selected.append(next_idx)
+            selected_scores.append(float(mmr_scores[next_idx]))
+            available_mask[next_idx] = False
+
+        ##########################################################
+        # 5. Record timing
+        ##########################################################
+
+        if "outer_acquisition_times" not in state:
+            state["outer_acquisition_times"] = []
+        if "mmr_knn_times" not in state:
+            state["mmr_knn_times"] = []
+
+        state["outer_acquisition_times"].append(
+            round(time.time() - outer_start, 3)
+        )
+
+        state["mmr_knn_times"].append(
+            round(mmr_knn_time, 3)
+        )
+
+        return selected, selected_scores
 
 
     def _ts_batch(self, model, batch_embs):
