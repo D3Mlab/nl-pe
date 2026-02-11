@@ -58,7 +58,7 @@ class GPActiveLearner(BaseActiveLearner):
         index_path = data_config.get('index_path')
         self.index = faiss.read_index(index_path)
         # Load all embeddings into CPU torch tensor once
-        self.d_embs_cpu = torch.from_numpy(self.index.reconstruct_n(0, self.index.ntotal)).float()
+        self.d_embs_cpu = torch.from_numpy(self.index.reconstruct_n(0, self.index.ntotal)).float().pin_memory()
         del self.index
         doc_ids_path = data_config.get('doc_ids_path')
         
@@ -344,14 +344,16 @@ class GPActiveLearner(BaseActiveLearner):
         total_gp_time = 0.0
         total_sort_time = 0.0
 
+        observed_mask_gpu = observed_mask_cpu.to(self.device)
+
         # For other methods, batch process
         with torch.no_grad(), self.fast_ctx:
             for start in range(0, n_total, batch_size):
                 end = min(start + batch_size, n_total)
                 # IO time: retrieving embeddings from pre-loaded tensor
                 io_start = time.time()
-                batch_embs = self.d_embs_cpu[start:end].to(self.device)
-                batch_obs = observed_mask_cpu[start:end].to(self.device)
+                batch_embs = self.d_embs_cpu[start:end].to(self.device,non_blocking=True)
+                batch_obs = observed_mask_gpu[start:end]
                 io_time = time.time() - io_start
                 total_io_time += io_time
 
