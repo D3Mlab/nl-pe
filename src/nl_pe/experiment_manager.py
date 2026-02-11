@@ -24,6 +24,7 @@ from nl_pe.utils.hyperpriors import HyperpriorFitter
 from nl_pe.gp_tests.inference import GPInference
 from nl_pe.query_gen.q_gen import QueryGenerator
 import re
+import gc
 
 
 class ExperimentManager():
@@ -69,7 +70,6 @@ class ExperimentManager():
         self.data_config = self.config.get('data', {})
 
         agent_class = search_agent.AGENT_CLASSES[self.config.get('agent', {}).get('agent_class')]
-        self.agent = agent_class(self.config)
 
         self.results_dir = Path(self.exp_dir) / 'per_query_results'
         self.results_dir.mkdir(exist_ok=True)
@@ -99,6 +99,8 @@ class ExperimentManager():
 
         for qid, query, q_reforms in zip(qids, queries, q_reformulations):
             try:
+                agent = agent_class(self.config)
+                
                 self.logger.info(f"Ranking query {qid}: {query}")
 
                 state = {
@@ -108,7 +110,7 @@ class ExperimentManager():
                 'query_reformulations': q_reforms,
                 }
 
-                result = self.agent.act(state)
+                result = agent.act(state)
 
                 if result['top_k_psgs']:
                     self.logger.info('Rank successful')
@@ -120,6 +122,12 @@ class ExperimentManager():
             except Exception as e:
                 self.logger.error(f'Failed to rank or write results for query {qid}: {str(e)}')
                 #raise
+
+            finally:
+                #gpu memory cleanup after each query to prevent OOM in subsequent queries
+                del agent
+                gc.collect()    
+                torch.cuda.empty_cache()
 
     def gen_qs(self):
         q_generator = QueryGenerator(self.config)
@@ -932,6 +940,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     load_dotenv()
+    # import os
+    # os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
     config_path = os.path.join(args.exp_dir, "config.yaml")
     if not os.path.exists(config_path):

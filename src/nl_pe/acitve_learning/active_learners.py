@@ -103,7 +103,7 @@ class GPActiveLearner(BaseActiveLearner):
         # Active learning config
         self.al_config = self.config.get('active_learning', {})
         acq_func_name = self.al_config.get('acquisition_f') #low level af, eg UCB, greedy-epsilon, etc (could be used as a component in diversified acq like MMR, fantasy-UCB, etc)
-        acq_strategy_name = self.al_config.get('acquisition_strategy') #high-level acquisition strategy, eg 'batch_af','mmr_af', 'fantasy_af', etc which may use the low-level acquisition function as a component.
+        acq_strategy_name = self.al_config.get('acquisition_strategy', 'batch_af') #high-level acquisition strategy, eg 'batch_af','mmr_af', 'fantasy_af', etc which may use the low-level acquisition function as a component.
         acq_strategy = getattr(self, acq_strategy_name)
         k_acq = int(self.al_config.get("k_acq", 1))  # how many top-k candidates each acquisition call returns
 
@@ -306,8 +306,8 @@ class GPActiveLearner(BaseActiveLearner):
                 final_gp_time += gp_time
                 posterior_means.extend(pred_batch.mean.tolist())
                 del batch_embs, pred_batch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                #if torch.cuda.is_available():
+                #    torch.cuda.empty_cache()
 
         state["final_inf_time"] = final_gp_time
         state["final_IO_time"] = final_io_time
@@ -324,8 +324,8 @@ class GPActiveLearner(BaseActiveLearner):
         self.logger.debug(f"Final ranked list created with top 5 docs: {state['top_k_psgs'][:5]}")
 
         del model, likelihood
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        #if torch.cuda.is_available():
+        #    torch.cuda.empty_cache()
     
     def batch_af(self, state, model, observed_mask_cpu, acq_func_name, k_acq=1, sorted=True):
 
@@ -482,7 +482,7 @@ class GPActiveLearner(BaseActiveLearner):
         mmr_lambda = float(self.al_config.get("mmr_lambda"))
 
         n_total = self.d_embs_cpu.shape[0]
-        batch_size = self.embedding_batch_size
+        batch_size = n_total #if start to OOM, decrease batch size to smaller or self.embedding_batch_size
 
         ##########################################################
         # 1. Compute base AF scores ONCE (already batched internally)
