@@ -327,14 +327,19 @@ class GPActiveLearner(BaseActiveLearner):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     
-    def batch_af(self, state, model, observed_mask_cpu, acq_func_name, k_acq=1):
+    def batch_af(self, state, model, observed_mask_cpu, acq_func_name, k_acq=1, sorted=True):
 
         self.logger.debug(f"Computing acquisition scores using '{acq_func_name}'")
         n_total = self.d_embs_cpu.shape[0]
         batch_size = self.embedding_batch_size
-        #incumbent top-k scores and indicies
-        inc_scores = None   # CPU tensor, shape (<=k_acq,)
-        inc_indices = None  # CPU tensor, shape (<=k_acq,)
+
+        if sorted:
+            #incumbent top-k scores and indicies
+            inc_scores = None
+            inc_indices = None
+        else:
+            dense_scores = torch.full((n_total,), float("-inf"), dtype=torch.float32)
+
         total_io_time = 0.0
         total_gp_time = 0.0
         total_sort_time = 0.0
@@ -367,11 +372,22 @@ class GPActiveLearner(BaseActiveLearner):
 
                 else:
                     raise ValueError(f"Unknown acquisition function: {acq_func_name}")
-                gp_time = time.time() - gp_start
-                total_gp_time += gp_time
+
+                total_gp_time += time.time() - gp_start
 
                 #apply mask to observed cands
                 scores[batch_obs] = float("-inf")
+
+                ####################################################
+                # UNSORTED PATH (FAST — NO TOPK)
+                ####################################################
+                if not sorted:
+                    dense_scores[start:end] = scores.detach().cpu()
+                    continue
+
+                ####################################################
+                # ORIGINAL SORTED PATH
+                ####################################################
 
                 sort_start = time.time()
                 k_here = min(k_acq, scores.numel())
@@ -406,9 +422,17 @@ class GPActiveLearner(BaseActiveLearner):
         state["inner_acquisition_IO_times"].append(round(total_io_time,3))
         state["inner_acquisition_sort_times"].append(round(total_sort_time,3))
 
+        ###########################################################
+        # RETURN
+        ###########################################################
 
+        if sorted:
+            return inc_indices.tolist(), inc_scores.tolist()
+        else:
+            # return ids in natural order + aligned scores
+            return list(range(n_total)), dense_scores.tolist()
+        
 
-        return inc_indices.tolist(), inc_scores.tolist()
 
     def fantasy_af(self, state, model, observed_mask_cpu, acq_func_name, k_acq=1):
         pass
@@ -464,17 +488,27 @@ class GPActiveLearner(BaseActiveLearner):
         # 1. Compute base AF scores ONCE (already batched internally)
         ##########################################################
 
-        base_idxs, base_scores = self.batch_af(
+        _, af_scores = self.batch_af(
             state,
             model,
             observed_mask_cpu,
             acq_func_name,
-            k_acq=n_total,   # safe: batch_af streams embeddings
+            #k_acq=n_total,  #k_acq ignored if unsorted
+            sorted=False,   # get unsorted scores to align with doc indicies for masking and later similarity computations
         )
+        af_scores = torch.tensor(af_scores, dtype=torch.float32)
 
-        # rebuild dense AF tensor
-        af_scores = torch.full((n_total,), float("-inf"), dtype=torch.float32)
-        af_scores[base_idxs] = torch.tensor(base_scores) #af_scores now follows order of doc indicies, with -inf for observed cands and actual scores for unobserved cands
+        # base_idxs, base_scores = self.batch_af(
+        #     state,
+        #     model,
+        #     observed_mask_cpu,
+        #     acq_func_name,
+        #     k_acq=n_total,   # safe: batch_af streams embeddings
+        # )
+
+        # # rebuild dense AF tensor
+        # af_scores = torch.full((n_total,), float("-inf"), dtype=torch.float32)
+        # af_scores[base_idxs] = torch.tensor(base_scores) #af_scores now follows order of doc indicies, with -inf for observed cands and actual scores for unobserved cands
 
         ##########################################################
         # 2. Initialize MMR state
