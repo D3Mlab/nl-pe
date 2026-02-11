@@ -35,6 +35,13 @@ class ExperimentManager():
         self.setup_logger()
         self.config['exp_dir'] = self.exp_dir
 
+        # try if getting fragmentation OOM:
+        # ---- CUDA allocator warmup ----
+        # if torch.cuda.is_available():
+        #     device = torch.device("cuda")
+        #     torch.empty((65000, 768), device=device)
+        #     torch.cuda.synchronize()
+
     def index_corpus(self):
         self.logger.info("Starting corpus indexing...")
 

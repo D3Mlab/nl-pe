@@ -394,8 +394,8 @@ class GPActiveLearner(BaseActiveLearner):
                 batch_top_scores, batch_top_local = torch.topk(scores, k=k_here, largest=True)
                 batch_top_global = batch_top_local + start
 
-                batch_top_scores = batch_top_scores.detach().cpu()
-                batch_top_global = batch_top_global.detach().cpu()
+                batch_top_scores = batch_top_scores.detach()
+                batch_top_global = batch_top_global.detach()
 
                 if inc_scores is None:
                     inc_scores = batch_top_scores
@@ -427,7 +427,7 @@ class GPActiveLearner(BaseActiveLearner):
         ###########################################################
 
         if sorted:
-            return inc_indices.tolist(), inc_scores.tolist()
+            return inc_indices.cpu().tolist(), inc_scores.cpu().tolist()
         else:
             # return ids in natural order + aligned scores
             return list(range(n_total)), dense_scores.tolist()
