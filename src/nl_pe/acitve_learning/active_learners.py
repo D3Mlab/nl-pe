@@ -133,6 +133,7 @@ class GPActiveLearner(BaseActiveLearner):
         state["obs_noise"] = []
         state["model_update_times"] = []
         state["observation_times"] = []
+        state["doc_text_read_times"] = []
 
         #read scorer cache
         prompt_name = ''
