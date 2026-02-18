@@ -5,14 +5,20 @@ import csv
 from nl_pe.utils.setup_logging import setup_logging
 
 class Scorer():
+
     def __init__(self, config):
         self.config = config
         self.logger = setup_logging(self.__class__.__name__, self.config)
+        self.logger.debug(f"Initializing {self.__class__.__name__} with config: {config}")
+
+
+class TextScorer(Scorer):
+    def __init__(self, config):
+        super().__init__(config)
         
         self.cache_path = self.config.get('data',{}).get('cache_path')
         self.texts_csv_path = self.config.get('data',{}).get('d_text_csv')
 
-        
         # -------------------------
         # Load corpus texts ONCE
         # -------------------------

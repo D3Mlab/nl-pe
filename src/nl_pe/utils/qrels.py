@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from nl_pe.utils.setup_logging import setup_logging
+from nl_pe.utils.scorer import Scorer
 from typing import Dict, TextIO
 import os
 import pytrec_eval
@@ -28,12 +29,7 @@ def load_pytrec_eval_qrels(qrels_path: str) -> Dict[str, Dict[str, int]]:
     with open(qrels_path, "r") as qrels_file:
         return pytrec_eval.parse_qrel(qrels_file)
     
-class GTScorer():
-
-    def __init__(self,config):
-        self.config = config
-        self.logger = setup_logging(self.__class__.__name__, config = self.config, output_file=os.path.join(self.config['exp_dir'], "experiment.log"))
-        self.logger.debug(f"Initializing {self.__class__.__name__} with config: {config}")
+class GTScorer(Scorer):
 
     def open_cache(self,qid,prompt_name = ''):
         data_config = self.config.get('data', {})

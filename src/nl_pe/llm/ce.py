@@ -1,12 +1,12 @@
 import json
 from nl_pe.utils.setup_logging import setup_logging
-from nl_pe.utils.scorer import Scorer
+from nl_pe.utils.scorer import Scorer, TextScorer
 from sentence_transformers import CrossEncoder
 from nl_pe.embedding.embedders import normalize_device
 import torch
 import os
 
-class CEScorer(Scorer):
+class CEScorer(TextScorer):
 
     def __init__(self,config):
         super().__init__(config)
@@ -51,7 +51,13 @@ class CEScorer(Scorer):
         if len(scores) > 0:
             state['observation_times'] += times
             return scores
+
+        with torch.no_grad():
+            pass
         
+        return scores.tolist() #detach from gpu
+    
+
         #if at least one doc id is missing values, recompute everything (but dont overwrite existing)
         #get list of doc_texts from corpus json
 

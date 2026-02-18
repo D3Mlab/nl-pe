@@ -517,7 +517,6 @@ class ExperimentManager():
 
         return X, Y
 
-
     def tune_gp_all_queries(self):
         #needs to be corrected -- it uses only on GP model for all queries, with y's sampled in batches for training from different queries
         """
@@ -705,7 +704,6 @@ class ExperimentManager():
                 )
                 break
 
-
     def tune_gp_first_query(self):
         #rough function to test gp tuning on a single query, remove later
         self.logger.info("Starting GP tuning experiment on a single query...")
@@ -850,7 +848,6 @@ class ExperimentManager():
                     f"neg_mll={loss_val:.4f}, best={best_loss:.4f}, lr={curr_lr:.6f}"
                 )
                 break
-
 
     def write_query_result_ir(self, qid, result):
         """
