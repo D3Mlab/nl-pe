@@ -3,6 +3,7 @@ from contextlib import nullcontext
 from nl_pe.utils.setup_logging import setup_logging
 from nl_pe.utils.qrels import load_qrels_map, GTScorer
 from nl_pe.llm.prompter import Prompter
+from nl_pe.llm.ce import CEScorer #add sentence tranformer alternatives if needed
 import os
 import torch
 import gpytorch
