@@ -35,4 +35,14 @@ gp:
   query_rel_label: 2
   fast_pred: True
   k_final: 1000
+observation:
+  func: gt
+llm:
+  model_class: OpenAILLM
+  model_name: gpt-5
+  temperature: 1
+  num_retries: 3
+templates:
+  template_dir: prompt_templates
+
   
