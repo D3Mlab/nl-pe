@@ -39,3 +39,4 @@ def jsonl_line_generator(path):
         with open(path, 'r', encoding='utf-8') as file:
             for line in file:
                 yield json.loads(line)
+

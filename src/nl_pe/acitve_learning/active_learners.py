@@ -132,7 +132,12 @@ class GPActiveLearner(BaseActiveLearner):
         state["signal_noise"] = []
         state["obs_noise"] = []
         state["model_update_times"] = []
+        state["observation_times"] = []
 
+        #read scorer cache
+        prompt_name = ''
+        qid = state['qid']
+        self.scorer.open_cache(qid,prompt_name=prompt_name)
 
         n_total = self.d_embs_cpu.shape[0]
         observed_mask_cpu = torch.zeros(n_total, dtype=torch.bool) #track which of the doc indicies have been observed

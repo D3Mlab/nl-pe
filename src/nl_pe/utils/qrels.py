@@ -35,6 +35,7 @@ class GTScorer():
         self.logger = setup_logging(self.__class__.__name__, config = self.config, output_file=os.path.join(self.config['exp_dir'], "experiment.log"))
         self.logger.debug(f"Initializing {self.__class__.__name__} with config: {config}")
 
+    def open_cache(self,qid,prompt_name = ''):
         data_config = self.config.get('data', {})
         qrels_path = data_config.get('qrels_path')
         if not qrels_path:

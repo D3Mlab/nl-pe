@@ -3,17 +3,16 @@ import re
 import jinja2
 from nl_pe.utils.setup_logging import setup_logging
 from nl_pe.utils.utils import *
+from nl_pe.utils.scorer import Scorer
 from nl_pe.llm import LLM_CLASSES
 import argparse
 import yaml
 from dotenv import load_dotenv
 
-class Prompter():
+class Prompter(Scorer):
     
     def __init__(self,config):
-
-        self.config = config
-        self.logger = setup_logging(self.__class__.__name__, self.config)
+        super().__init__(config)
 
         self.llm_config = config.get('llm', {}) 
         self.model_class_name = self.llm_config.get('model_class')
@@ -24,6 +23,7 @@ class Prompter():
         model_class = LLM_CLASSES.get(self.model_class_name)
         self.llm = model_class(config,self.model_name)
         self.jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader(searchpath=self.template_dir))
+
 
     def score(self, state, doc_ids):
         #add scoring prompt to cache name if it doesn't end with it
