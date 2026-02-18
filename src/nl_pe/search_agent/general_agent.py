@@ -5,12 +5,13 @@ from nl_pe.search_agent.base_agent import BaseAgent
 
 class GeneralAgent(BaseAgent):
 
-    def __init__(self, config):
+    def __init__(self, config, scorer):
         super().__init__(config)
-
+        self.scorer = scorer
         from nl_pe.search_agent.registry import POLICY_CLASSES
         self.policy_class = POLICY_CLASSES.get(self.agent_config.get('policy'))
-        self.policy = self.policy_class(self.config)
+        self.policy = self.policy_class(self.config,self.scorer)
+
 
     def act(self, state) -> dict:
 

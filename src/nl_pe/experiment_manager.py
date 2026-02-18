@@ -25,6 +25,15 @@ from nl_pe.gp_tests.inference import GPInference
 from nl_pe.query_gen.q_gen import QueryGenerator
 import re
 import gc
+from nl_pe.utils.qrels import GTScorer
+from nl_pe.llm.ce import CEScorer
+from nl_pe.llm.prompter import Prompter
+
+SCORER_CLASSES = {
+    'gt': GTScorer,
+    'ce': CEScorer,
+    'llm': Prompter,
+}
 
 
 class ExperimentManager():
@@ -104,9 +113,14 @@ class ExperimentManager():
         else:
             q_reformulations = [[] for _ in range(len(qs_df))]
 
+        #initialize scorer
+        scorer_name = self.config.get('observation').get("class")
+        scorer_cls = SCORER_CLASSES[scorer_name]
+        scorer = scorer_cls(self.config)
+
         for qid, query, q_reforms in zip(qids, queries, q_reformulations):
             try:
-                agent = agent_class(self.config)
+                agent = agent_class(self.config, scorer)
                 
                 self.logger.info(f"Ranking query {qid}: {query}")
 

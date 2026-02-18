@@ -4,9 +4,10 @@ from nl_pe.utils.setup_logging import setup_logging
 
 class BasePolicy(ABC):
 
-    def __init__(self, config):
+    def __init__(self, config, scorer):
         
         self.config = config
+        self.scorer = scorer
         self.logger = setup_logging(self.__class__.__name__, self.config)
 
         from .registry import COMPONENT_CLASSES 
@@ -26,9 +27,15 @@ class BasePolicy(ABC):
             comp_class = self.COMPONENT_CLASSES.get(comp_name)
             if not comp_class:
                 raise ValueError(f"Component class for {comp_name} not found.")
-            self.curr_comp_inst = comp_class(config=self.config)
-            self.logger.debug(f'Component instance created: {self.curr_comp_inst}')
-            self.components[comp_name] = self.curr_comp_inst
+            #special case for active learner
+            if comp_name == 'GPActiveLearner':
+                self.curr_comp_inst = comp_class(config=self.config,scorer=self.scorer)
+                self.logger.debug(f'Component instance created: {self.curr_comp_inst}')
+                self.components[comp_name] = self.curr_comp_inst
+            else:
+                self.curr_comp_inst = comp_class(config=self.config)
+                self.logger.debug(f'Component instance created: {self.curr_comp_inst}')
+                self.components[comp_name] = self.curr_comp_inst
         else:
             self.curr_comp_inst = self.components[comp_name]
 

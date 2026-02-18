@@ -15,15 +15,15 @@ import time
 import pandas as pd
 
 
-SCORER_CLASSES = {
-    'gt': GTScorer,
-    #"ce": CEScorer,
-    #"llm": Prompter,
-}
+# SCORER_CLASSES = {
+#     'gt': GTScorer,
+#     #"ce": CEScorer,
+#     #"llm": Prompter,
+# }
 
 class BaseActiveLearner(ABC):
 
-    def __init__(self, config):
+    def __init__(self, config, scorer):
 
         self.config = config
         self.logger = setup_logging(self.__class__.__name__, config = self.config, output_file=os.path.join(self.config['exp_dir'], "experiment.log"))
@@ -36,37 +36,18 @@ class BaseActiveLearner(ABC):
         self.logger.info(f"Using device: {self.device}")
 
         #initialize scorer
-        scorer_name = config.get('observation').get("class")
-        scorer_cls = SCORER_CLASSES[scorer_name]
-        self.scorer = scorer_cls(self.config)
-        self.score = self.scorer.score
-
-    # def get_rel_judgments(self, state, doc_ids):
-    #     doc_ids = [str(doc_id) for doc_id in doc_ids]
-    #     self.logger.debug(
-    #         "Getting relevance judgments for %d doc_ids with qid %s",
-    #         len(doc_ids),
-    #         state.get('qid', 'unknown'),
-    #     )
-    #     if not hasattr(self, 'qrels_map'):
-    #         data_config = self.config.get('data', {})
-    #         qrels_path = data_config.get('qrels_path')
-    #         if not qrels_path:
-    #             self.logger.error("Qrels path not specified in data config")
-    #             raise ValueError("Qrels path not specified in data config")
-    #         self.qrels_map = load_qrels_map(qrels_path)
-    #         self.logger.debug(f"Loaded qrels for {len(self.qrels_map)} queries")
-    #     qid = str(state['qid'])
-    #     rel_map = self.qrels_map.get(qid, {})
-    #     judgments = [rel_map.get(doc_id, 0) for doc_id in doc_ids]
-    #     self.logger.debug("Batch relevance judgments head: %s", judgments[:10])
-    #     return judgments
+        # scorer_name = config.get('observation').get("class")
+        # scorer_cls = SCORER_CLASSES[scorer_name]
+        # self.scorer = scorer_cls(self.config)
+        # self.score = self.scorer.score
+        self.scorer = scorer
+        self.score = scorer.score
 
 
 class GPActiveLearner(BaseActiveLearner):
 
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config, scorer):
+        super().__init__(config, scorer)
 
         # Data config for index and batch size
         data_config = self.config.get('data', {})
