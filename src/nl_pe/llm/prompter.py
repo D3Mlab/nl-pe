@@ -25,6 +25,9 @@ class Prompter():
         self.llm = model_class(config,self.model_name)
         self.jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader(searchpath=self.template_dir))
 
+    def score(self, state, doc_ids):
+        #add scoring prompt to cache name if it doesn't end with it
+        pass
 
     def pw_rerank(self, state):
 
