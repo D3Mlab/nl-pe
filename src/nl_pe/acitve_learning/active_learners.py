@@ -1,7 +1,8 @@
 from abc import ABC
 from contextlib import nullcontext
 from nl_pe.utils.setup_logging import setup_logging
-from nl_pe.utils.qrels import load_qrels_map
+from nl_pe.utils.qrels import load_qrels_map, GTScorer
+from nl_pe.llm.prompter import Prompter
 import os
 import torch
 import gpytorch
@@ -11,6 +12,13 @@ import numpy as np
 import math
 import time
 import pandas as pd
+
+
+SCORER_CLASSES = {
+    'gt': GTScorer,
+    #"ce": CEScorer,
+    #"llm": Prompter,
+}
 
 class BaseActiveLearner(ABC):
 
@@ -26,26 +34,32 @@ class BaseActiveLearner(ABC):
         self.device = torch.device('cuda' if tensor_ops_device == 'gpu' and torch.cuda.is_available() else 'cpu')
         self.logger.info(f"Using device: {self.device}")
 
-    def get_rel_judgments(self, state, doc_ids):
-        doc_ids = [str(doc_id) for doc_id in doc_ids]
-        self.logger.debug(
-            "Getting relevance judgments for %d doc_ids with qid %s",
-            len(doc_ids),
-            state.get('qid', 'unknown'),
-        )
-        if not hasattr(self, 'qrels_map'):
-            data_config = self.config.get('data', {})
-            qrels_path = data_config.get('qrels_path')
-            if not qrels_path:
-                self.logger.error("Qrels path not specified in data config")
-                raise ValueError("Qrels path not specified in data config")
-            self.qrels_map = load_qrels_map(qrels_path)
-            self.logger.debug(f"Loaded qrels for {len(self.qrels_map)} queries")
-        qid = str(state['qid'])
-        rel_map = self.qrels_map.get(qid, {})
-        judgments = [rel_map.get(doc_id, 0) for doc_id in doc_ids]
-        self.logger.debug("Batch relevance judgments head: %s", judgments[:10])
-        return judgments
+        #initialize scorer
+        scorer_name = config.get('observation').get("class")
+        scorer_cls = SCORER_CLASSES[scorer_name]
+        self.scorer = scorer_cls(self.config)
+        self.score = self.scorer.score
+
+    # def get_rel_judgments(self, state, doc_ids):
+    #     doc_ids = [str(doc_id) for doc_id in doc_ids]
+    #     self.logger.debug(
+    #         "Getting relevance judgments for %d doc_ids with qid %s",
+    #         len(doc_ids),
+    #         state.get('qid', 'unknown'),
+    #     )
+    #     if not hasattr(self, 'qrels_map'):
+    #         data_config = self.config.get('data', {})
+    #         qrels_path = data_config.get('qrels_path')
+    #         if not qrels_path:
+    #             self.logger.error("Qrels path not specified in data config")
+    #             raise ValueError("Qrels path not specified in data config")
+    #         self.qrels_map = load_qrels_map(qrels_path)
+    #         self.logger.debug(f"Loaded qrels for {len(self.qrels_map)} queries")
+    #     qid = str(state['qid'])
+    #     rel_map = self.qrels_map.get(qid, {})
+    #     judgments = [rel_map.get(doc_id, 0) for doc_id in doc_ids]
+    #     self.logger.debug("Batch relevance judgments head: %s", judgments[:10])
+    #     return judgments
 
 
 class GPActiveLearner(BaseActiveLearner):
@@ -191,7 +205,8 @@ class GPActiveLearner(BaseActiveLearner):
                     warm_doc_indices.append(idx)
 
                 if warm_doc_ids:
-                    warm_labels = self.get_rel_judgments(state, warm_doc_ids)
+                    warm_doc_ids = [str(i) for i in warm_doc_ids]
+                    warm_labels = self.score(state, warm_doc_ids)
                     for d_id, idx, y_new in zip(warm_doc_ids, warm_doc_indices, warm_labels):
                         X_new = self.d_embs_cpu[idx].unsqueeze(0).to(self.device)
 
@@ -252,7 +267,7 @@ class GPActiveLearner(BaseActiveLearner):
             batch_size = min(len(top_idxs), remaining_slots)
             selected_indices = top_idxs[:batch_size]
 
-            selected_doc_ids = [self.doc_ids[idx] for idx in selected_indices]
+            selected_doc_ids = [str(self.doc_ids[idx]) for idx in selected_indices]
             self.logger.debug(
                 "Selected %d documents for acquisition (head=%s)",
                 len(selected_doc_ids),
@@ -267,7 +282,7 @@ class GPActiveLearner(BaseActiveLearner):
                 observed_mask_cpu[idx] = True
 
             # Get labels for selected docs (batch)
-            y_new_batch = self.get_rel_judgments(state, selected_doc_ids)
+            y_new_batch = self.score(state, selected_doc_ids)
             state["observed_scores"].extend([float(y_new) for y_new in y_new_batch])
 
             # Update observations with batch
