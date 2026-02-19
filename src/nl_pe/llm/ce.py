@@ -5,6 +5,8 @@ from sentence_transformers import CrossEncoder
 from nl_pe.embedding.embedders import normalize_device
 import torch
 import os
+import time
+import numpy as np
 
 class CEScorer(TextScorer):
 
@@ -33,52 +35,48 @@ class CEScorer(TextScorer):
 
         scores = []
         times = []
+        #track what is not cached
+        missing_doc_ids = []
 
-        #check if ALL doc_ids already have cached scores
+        # --------------------------------------------------
+        # 1. Check cache
+        # --------------------------------------------------
         for did in doc_ids:
             key = f"{did}::bs::{batch_size}"
             if key in self.cache:
                 entry = self.cache[key]
-                score = entry["score"]
-                time = entry["time"]
-                scores.append(score)
-                times.append(time)
+                scores.append(float(entry["score"]))
+                times.append(float(entry["time"]))
             else:
-                scores = []
-                times = []
-                break
-        
-        if len(scores) > 0:
-            state['observation_times'] += times
+                missing_doc_ids.append(did)
+
+        # If ALL present → return immediately
+        if len(missing_doc_ids) == 0:
+            state["observation_times"] += times
             return scores
 
+        d_texts = self.did_to_text(state, doc_ids)
+        query_text = state.get("query")
+
+        pairs = [(query_text, d_text) for d_text in d_texts]
+
+        start_t = time.time()
+
         with torch.no_grad():
-            pass
+            raw_scores = self.model.predict(
+            pairs,
+            batch_size=batch_size,
+            convert_to_numpy=True
+        )
         
+        inf_time = time.time() - start_t
+        
+        if self.normalize_scores:
+                    raw_scores = (raw_scores - raw_scores.mean()) / (raw_scores.std() + 1e-8)
+
+        #record cache -- only for the docs that did not have a cached value for this batch size already
+
         return scores.tolist() #detach from gpu
     
 
-        #if at least one doc id is missing values, recompute everything (but dont overwrite existing)
-        #get list of doc_texts from corpus json
 
-        #normalize
-        #write to cache  
-        #debug cache write
-
-
-        #NOTE: could check performance without normalization of scores (example scores in api are -4, 8)
-
-        pass
-
-
-
-#in embedders:
-# Device configuration: embedding operations use inference_device, tensor ops use tensor_ops_device
-# def normalize_device(dev):
-#     if dev == 'gpu' or dev == 'cuda':
-#         return 'cuda:0'
-#     elif dev == 'cpu':
-#         return 'cpu'
-#     else:
-#         # Assume it's already a proper device string like 'cuda:1'
-#         return dev

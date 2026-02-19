@@ -58,15 +58,15 @@ class TextScorer(Scorer):
 
         self.cache_file = cache_path  # store path for later writes
 
-    def did_to_text(self,doc_ids, state):
+    def did_to_text(self, state, doc_ids):
         start = time.time()
 
         texts = []
         for did in doc_ids:
             did = str(did)
-            if did not in self._doc_lookup:
+            if did not in self.doc_text_map:
                 raise KeyError(f"Doc id {did} not found in corpus.")
-            texts.append(self._doc_lookup[did])
+            texts.append(self.doc_text_map[did])
 
         read_time = time.time() - start
         state["doc_text_read_times"].append(read_time)

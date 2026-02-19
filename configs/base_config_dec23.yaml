@@ -36,7 +36,7 @@ gp:
   fast_pred: True
   k_final: 1000
 observation:
-  func: gt
+  class: gt
   normalize_scores: True
 llm:
   model_class: OpenAILLM

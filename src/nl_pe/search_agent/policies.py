@@ -42,8 +42,8 @@ class BasePolicy(ABC):
 class PipelinePolicy(BasePolicy):
     #execute steps in a pipeline up to K times 
 
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config, scorer):
+        super().__init__(config, scorer)
         #list of policy steps (i.e. components and methods to call)
         self.steps = self.config.get('agent', {}).get('policy_steps', [])
         #step_cnt (lowest level iteration tracking) is reset to 0 after each pipeline iteration

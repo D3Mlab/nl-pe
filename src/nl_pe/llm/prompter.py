@@ -3,13 +3,13 @@ import re
 import jinja2
 from nl_pe.utils.setup_logging import setup_logging
 from nl_pe.utils.utils import *
-from nl_pe.utils.scorer import Scorer
+from nl_pe.utils.scorer import TextScorer
 from nl_pe.llm import LLM_CLASSES
 import argparse
 import yaml
 from dotenv import load_dotenv
 
-class Prompter(Scorer):
+class Prompter(TextScorer):
     
     def __init__(self,config):
         super().__init__(config)
