@@ -26,6 +26,7 @@ class CEScorer(TextScorer):
         )
         self.model.model.eval()
         self.batch_size = self.config.get('data',{}).get('embedding_batch_size')
+        self.query_rel_label = float(self.config.get('gp',{}).get('query_rel_label'))
 
     def score(self,state,doc_ids):
         batch_size = min(self.batch_size, len(doc_ids))
@@ -83,9 +84,12 @@ class CEScorer(TextScorer):
             scores = self.model.predict(
             pairs,
             batch_size=batch_size,
-            convert_to_numpy=True
+            convert_to_numpy=True,
+            apply_softmax= False
         )
         inf_time = time.time() - start_t
+        #sigmoid and scale by query relevance value (e.g. 1, 2)
+        scores = 1.0 / (1.0 + np.exp(-scores)) * self.query_rel_label
         scores = scores.tolist() #detach from gpu
 
         self.logger.debug(

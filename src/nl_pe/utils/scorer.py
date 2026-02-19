@@ -11,6 +11,8 @@ class Scorer():
         self.logger = setup_logging(self.__class__.__name__, self.config)
         self.logger.debug(f"Initializing {self.__class__.__name__} with config: {config}")
 
+    def write_cache(self):
+        pass
 
 class TextScorer(Scorer):
     def __init__(self, config):
