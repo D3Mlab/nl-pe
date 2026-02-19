@@ -49,6 +49,10 @@ class GPActiveLearner(BaseActiveLearner):
     def __init__(self, config, scorer):
         super().__init__(config, scorer)
 
+        self.normalize_observations = bool(
+            self.config.get('observation', {}).get('normalize_scores', False)
+        ) 
+
         # Data config for index and batch size
         data_config = self.config.get('data', {})
         index_path = data_config.get('index_path')
@@ -75,6 +79,27 @@ class GPActiveLearner(BaseActiveLearner):
         self.fast_ctx = gpytorch.settings.fast_pred_var() if fast_pred else nullcontext()
         if fast_pred:
             self.logger.info("Using fast_pred_var")
+
+    def _get_gp_train_targets(self, y_obs):
+        """
+        Return training targets for GP model.
+
+        If observation.normalize_scores is enabled, normalize using ALL
+        observations collected so far (i.e., the full y_obs each time we build
+        or rebuild the model).
+        """
+        y_train = y_obs.clone()
+
+        if not self.normalize_observations:
+            return y_train
+
+        mean = y_train.mean()
+        std = y_train.std(unbiased=False)
+
+        if std.item() < 1e-8:
+            return y_train - mean
+
+        return (y_train - mean) / (std + 1e-8)
 
     def active_learn(self, state):
         # Data already loaded in __init__
@@ -673,13 +698,15 @@ class GPActiveLearner(BaseActiveLearner):
     ):
         start = time.time()
 
+        y_train = self._get_gp_train_targets(y_obs)
+
         likelihood = gpytorch.likelihoods.GaussianLikelihood()
         likelihood.initialize(noise=observation_noise)
         likelihood = likelihood.to(self.device)
 
         model = ExactGPModel(
             X_obs,
-            y_obs,
+            y_train,
             likelihood,
             lengthscale,
             signal_noise,
@@ -705,7 +732,7 @@ class GPActiveLearner(BaseActiveLearner):
         #     obs_noise_log,
         # )
 
-        self._maybe_refit_gp(state, model, likelihood, X_obs, y_obs)
+        self._maybe_refit_gp(state, model, likelihood, X_obs, y_train)
 
         elapsed = time.time() - start
         state["model_update_times"].append(round(elapsed,3))
@@ -813,6 +840,8 @@ class ExactGPModel(gpytorch.models.ExactGP):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
+
 
 
 
