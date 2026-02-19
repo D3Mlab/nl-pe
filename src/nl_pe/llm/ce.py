@@ -25,11 +25,8 @@ class CEScorer(TextScorer):
             automodel_args={"torch_dtype": torch.float16} if use_fp16 else {}
         )
         self.model.model.eval()
-
-        self.normalize_scores = self.config.get('observation', {}).get('normalize_scores', False)
         self.batch_size = self.config.get('data',{}).get('embedding_batch_size')
 
-    
     def score(self,state,doc_ids):
         batch_size = min(self.batch_size, len(doc_ids))
 
@@ -63,20 +60,30 @@ class CEScorer(TextScorer):
         start_t = time.time()
 
         with torch.no_grad():
-            raw_scores = self.model.predict(
+            scores = self.model.predict(
             pairs,
             batch_size=batch_size,
             convert_to_numpy=True
         )
-        
         inf_time = time.time() - start_t
-        
-        if self.normalize_scores:
-                    raw_scores = (raw_scores - raw_scores.mean()) / (raw_scores.std() + 1e-8)
+        scores = scores.tolist() #detach from gpu
 
-        #record cache -- only for the docs that did not have a cached value for this batch size already
+        # --------------------------------------------------
+        # 4. Cache missing entries only
+        # --------------------------------------------------
+        per_doc_time = inf_time / len(doc_ids)
 
-        return scores.tolist() #detach from gpu
+        for did, score in zip(doc_ids, scores):
+            key = f"{did}::bs::{batch_size}"
+            if key not in self.cache:
+                self.cache[key] = {
+                    "score": float(score),
+                    "time": float(per_doc_time)
+                }
+
+        state["observation_times"] += [inf_time]
+
+        return scores 
     
 
 

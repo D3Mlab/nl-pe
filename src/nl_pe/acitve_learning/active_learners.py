@@ -452,6 +452,9 @@ class GPActiveLearner(BaseActiveLearner):
         state["inner_acquisition_IO_times"].append(round(total_io_time,3))
         state["inner_acquisition_sort_times"].append(round(total_sort_time,3))
 
+        #write scorer cache
+        self.scorer.write_cache()
+
         ###########################################################
         # RETURN
         ###########################################################

@@ -58,6 +58,10 @@ class TextScorer(Scorer):
 
         self.cache_file = cache_path  # store path for later writes
 
+    def write_cache(self):
+        with open(self.cache_file, "w", encoding="utf-8") as f:
+            json.dump(self.cache, f, ) #ensure_ascii=False
+
     def did_to_text(self, state, doc_ids):
         start = time.time()
 
