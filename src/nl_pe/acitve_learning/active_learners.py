@@ -217,20 +217,31 @@ class GPActiveLearner(BaseActiveLearner):
 
                 if warm_doc_ids:
                     warm_doc_ids = [str(i) for i in warm_doc_ids]
-                    warm_labels = self.score(state, warm_doc_ids)
-                    for d_id, idx, y_new in zip(warm_doc_ids, warm_doc_indices, warm_labels):
-                        X_new = self.d_embs_cpu[idx].unsqueeze(0).to(self.device)
 
-                        # Update observations and selected docs
+                    # Score warm-start docs in k_acq-sized batches (same pattern as AL loop)
+                    warm_batch_size = max(k_acq, 1)
+                    for start in range(0, len(warm_doc_ids), warm_batch_size):
+                        end = min(start + warm_batch_size, len(warm_doc_ids))
+                        batch_doc_ids = warm_doc_ids[start:end]
+                        batch_indices = warm_doc_indices[start:end]
+
+                        batch_labels = self.score(state, batch_doc_ids)
+
+                        # Batch update observations
+                        X_new = self.d_embs_cpu[batch_indices].to(self.device)
+                        y_new_tensor = torch.tensor(batch_labels, dtype=torch.float32).to(self.device)
                         X_obs = torch.cat([X_obs, X_new], dim=0)
-                        y_obs = torch.cat(
-                            [y_obs, torch.tensor([y_new], dtype=torch.float32).to(self.device)],
-                            dim=0,
-                        )
-                        state["selected_doc_ids"].append(d_id)
-                        state["observed_scores"].append(float(y_new))
-                        observed_mask_cpu[idx] = True
-                        warm_added += 1
+                        y_obs = torch.cat([y_obs, y_new_tensor], dim=0)
+
+                        # Track selected docs / observed labels
+                        state["selected_doc_ids"].extend(batch_doc_ids)
+                        state["observed_scores"].extend([float(y_new) for y_new in batch_labels])
+
+                        # Mark observations in mask
+                        for idx in batch_indices:
+                            observed_mask_cpu[idx] = True
+
+                        warm_added += len(batch_doc_ids)
 
                 # Reduce the number of AL iterations by the number of warm-start observations
                 if warm_added > 0:
@@ -841,6 +852,7 @@ class ExactGPModel(gpytorch.models.ExactGP):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
 
 
 
