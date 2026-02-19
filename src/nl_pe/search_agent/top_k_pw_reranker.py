@@ -14,7 +14,7 @@ class TopKPWReranker():
         self.score = scorer.score
 
         #batch size
-        self.k_acq = int(self.al_config.get("k_acq", 1))
+        self.k_acq = int(self.get('active_learning', {}).get("k_acq", 1))
 
     def rerank(self, state):
         #open scorer cache

@@ -6,6 +6,7 @@ from nl_pe.search_agent.policies import PipelinePolicy
 from nl_pe.embedding.embedders import HuggingFaceEmbedderSentenceTransformers
 from nl_pe.embedding.embedders import GoogleEmbedder
 from nl_pe.acitve_learning.active_learners import GPActiveLearner
+from nl_pe.search_agent.top_k_pw_reranker import TopKPWReranker
 
 AGENT_CLASSES = {
     'GeneralAgent': GeneralAgent,
@@ -18,6 +19,7 @@ COMPONENT_CLASSES = {
     "HuggingFaceEmbedderSentenceTransformers": HuggingFaceEmbedderSentenceTransformers,
     "GoogleEmbedder": GoogleEmbedder,
     "GPActiveLearner": GPActiveLearner,
+    'TopKPWReranker': TopKPWReranker
     }
 
 POLICY_CLASSES = {
