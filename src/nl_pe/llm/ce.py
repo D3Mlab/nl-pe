@@ -12,7 +12,7 @@ class CEScorer(TextScorer):
 
     def __init__(self,config):
         super().__init__(config)
-        #device
+
         self.device = normalize_device(self.config.get('device').get('inference_device')) #'gpu' or 'cpu' in config
         use_fp16 = "cuda" in self.device
         self.logger.info(f"Loading CrossEncoder on device={self.device}")

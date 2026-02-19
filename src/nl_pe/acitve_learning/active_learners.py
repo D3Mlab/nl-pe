@@ -349,6 +349,9 @@ class GPActiveLearner(BaseActiveLearner):
         if "query_reformation_embeddings" in state:
             state.pop("query_reformation_embeddings")
 
+        #write scorer cache
+        self.scorer.write_cache()
+
         self.logger.debug(f"Final ranked list created with top 5 docs: {state['top_k_psgs'][:5]}")
 
         del model, likelihood
@@ -451,9 +454,6 @@ class GPActiveLearner(BaseActiveLearner):
         state["inner_acquisition_times"].append(round(total_gp_time,3))
         state["inner_acquisition_IO_times"].append(round(total_io_time,3))
         state["inner_acquisition_sort_times"].append(round(total_sort_time,3))
-
-        #write scorer cache
-        self.scorer.write_cache()
 
         ###########################################################
         # RETURN
