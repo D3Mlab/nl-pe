@@ -92,6 +92,9 @@ class GPActiveLearner(BaseActiveLearner):
 
         if not self.normalize_observations:
             return y_train
+        
+        if y_train.numel() < 10:
+            return y_train  #only normalize if over 10 observations (allows the query and reformulations to act as seed)
 
         mean = y_train.mean()
         std = y_train.std(unbiased=False)

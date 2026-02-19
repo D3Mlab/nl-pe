@@ -37,7 +37,7 @@ gp:
   k_final: 1000
 observation:
   class: gt
-  normalize_scores: True
+  normalize_scores: False
 llm:
   model_class: OpenAILLM
   model_name: gpt-5

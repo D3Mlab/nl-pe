@@ -13,7 +13,7 @@ class CEScorer(TextScorer):
     def __init__(self,config):
         super().__init__(config)
 
-        self.device = normalize_device(self.config.get('device').get('inference_device')) #'gpu' or 'cpu' in config
+        self.device = normalize_device(self.config.get('inference_device')) #'gpu' or 'cpu' in config
         use_fp16 = "cuda" in self.device
         self.logger.info(f"Loading CrossEncoder on device={self.device}")
 
@@ -29,6 +29,13 @@ class CEScorer(TextScorer):
 
     def score(self,state,doc_ids):
         batch_size = min(self.batch_size, len(doc_ids))
+
+        self.logger.debug(
+            "CEScorer.score called | qid=%s | n_doc_ids=%d | batch_size=%d",
+            state.get("qid", "unknown"),
+            len(doc_ids),
+            batch_size,
+        )
 
         scores = []
         times = []
@@ -47,8 +54,15 @@ class CEScorer(TextScorer):
             else:
                 missing_doc_ids.append(did)
 
+        self.logger.debug(
+            "Cache check done | hits=%d | misses=%d",
+            len(doc_ids) - len(missing_doc_ids),
+            len(missing_doc_ids),
+        )
+
         # If ALL present → return immediately
         if len(missing_doc_ids) == 0:
+            self.logger.debug("All scores found in cache; skipping CE inference")
             state["observation_times"] += times
             return scores
 
@@ -56,6 +70,12 @@ class CEScorer(TextScorer):
         query_text = state.get("query")
 
         pairs = [(query_text, d_text) for d_text in d_texts]
+
+        self.logger.debug(
+            "Running CE inference | n_pairs=%d | query_len=%d",
+            len(pairs),
+            len(query_text) if query_text is not None else -1,
+        )
 
         start_t = time.time()
 
@@ -67,6 +87,12 @@ class CEScorer(TextScorer):
         )
         inf_time = time.time() - start_t
         scores = scores.tolist() #detach from gpu
+
+        self.logger.debug(
+            "CE inference complete | n_scores=%d | inf_time=%.4fs",
+            len(scores),
+            inf_time,
+        )
 
         # --------------------------------------------------
         # 4. Cache missing entries only
@@ -81,9 +107,16 @@ class CEScorer(TextScorer):
                     "time": float(per_doc_time)
                 }
 
+        self.logger.debug(
+            "Cache updated for missing docs | added=%d | per_doc_time=%.6fs",
+            len(missing_doc_ids),
+            per_doc_time,
+        )
+
         state["observation_times"] += [inf_time]
 
         return scores 
     
+
 
 
