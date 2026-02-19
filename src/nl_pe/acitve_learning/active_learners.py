@@ -35,11 +35,6 @@ class BaseActiveLearner(ABC):
         self.device = torch.device('cuda' if tensor_ops_device == 'gpu' and torch.cuda.is_available() else 'cpu')
         self.logger.info(f"Using device: {self.device}")
 
-        #initialize scorer
-        # scorer_name = config.get('observation').get("class")
-        # scorer_cls = SCORER_CLASSES[scorer_name]
-        # self.scorer = scorer_cls(self.config)
-        # self.score = self.scorer.score
         self.scorer = scorer
         self.score = scorer.score
 
@@ -145,7 +140,7 @@ class GPActiveLearner(BaseActiveLearner):
         state["doc_text_read_times"] = []
 
         #read scorer cache
-        prompt_name = ''
+        prompt_name = '' #TODO -- update here and in TopKPWReranker
         qid = state['qid']
         self.scorer.open_cache(qid,prompt_name=prompt_name)
 
