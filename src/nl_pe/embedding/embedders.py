@@ -107,7 +107,7 @@ class BaseEmbedder(ABC):
         self.logger.debug(f"Processing {num_docs} docs in batches of {inference_batch_size}")
 
         # Embed first batch to get dimensionality and add to index
-        first_batch = self.embed_documents_batch(texts[:inference_batch_size], prompt=prompt)
+        first_batch = self.embed_documents_batch(texts[:inference_batch_size], prompt=prompt, batch_size = inference_batch_size)
         d = first_batch.shape[1]
         self.logger.debug(f"Embedding dimension: {d}")
 
@@ -126,7 +126,7 @@ class BaseEmbedder(ABC):
         # Process remaining batches
         for i in range(inference_batch_size, num_docs, inference_batch_size):
             batch_texts = texts[i:i + inference_batch_size]
-            embeddings_tensor = self.embed_documents_batch(batch_texts, prompt=prompt)
+            embeddings_tensor = self.embed_documents_batch(batch_texts, prompt=prompt, batch_size = inference_batch_size)
             batch_embeddings = embeddings_tensor.detach().cpu().numpy()
             index.add(batch_embeddings)
             self.logger.debug(f"Added batch {i//inference_batch_size + 1}/{(num_docs + inference_batch_size - 1)//inference_batch_size}")
@@ -331,7 +331,7 @@ class GoogleEmbedder(BaseEmbedder):
 
         self.client = genai.Client()
 
-    def embed_documents_batch(self, texts: list[str], prompt = '') -> Tensor:
+    def embed_documents_batch(self, texts: list[str], prompt = '', batch_size = 32) -> Tensor:
         #add 'task types' later
         self.logger.debug(f"Encoding {len(texts)} texts in batch")
 
@@ -402,7 +402,7 @@ class DimTruncator(BaseEmbedder):
         # reuse the same key used in other parts of your config
         self.inference_batch_size = self.embedding_config.get("inference_batch_size", 100)
 
-    def embed_documents_batch(self, texts: list[str]) -> Tensor:
+    def embed_documents_batch(self, texts: list[str], batch_size = 32) -> Tensor:
         # Not used for DimTruncator, but required by BaseEmbedder
         raise NotImplementedError("DimTruncator does not embed text")
 
@@ -526,13 +526,14 @@ class HuggingFaceEmbedderSentenceTransformers(BaseEmbedder):
         self.logger.info(f"Model device: {device}")
         self.logger.info("Matryoshka dimension set to: %s", self.matryoshka_dim if self.matryoshka_dim else "full")
 
-    def embed_documents_batch(self, texts: list[str], prompt = '') -> Tensor:
+    def embed_documents_batch(self, texts: list[str], prompt = '', batch_size = 32) -> Tensor:
         self.logger.debug(f"Encoding {len(texts)} texts in batch")
 
         kwargs = dict(
             convert_to_tensor=True,
             normalize_embeddings=self.normalize,
-            show_progress_bar=True
+            show_progress_bar=True,
+            batch_size = batch_size
         )
 
         if prompt:
