@@ -40,9 +40,28 @@ class Prompter(TextScorer):
         cache_use_counter.setdefault("used", 0)
         cache_use_counter.setdefault("not_used", 0)
 
-        #check cache
+        # exact-match cache key from full doc_ids sequence
+        cache_key = "-".join([str(did) for did in doc_ids])
 
-        #if not cache:
+        # check cache (exact match only)
+        if cache_key in self.cache:
+            entry = self.cache[cache_key]
+            cached_scores = [float(s) for s in entry["scores"]]
+            cached_time = float(entry["time"])
+            cached_prompt_tokens = entry.get("prompt_tokens", None)
+
+            state["observation_times"] += [cached_time]
+            if 'prompt_tokens' not in state:
+                state['prompt_tokens'] = []
+            state['prompt_tokens'].append(cached_prompt_tokens)
+
+            cache_use_counter["used"] += 1
+            self.logger.debug("PW cache hit for doc_ids key: %s", cache_key)
+            return cached_scores
+
+        cache_use_counter["not_used"] += 1
+
+        # if not cache:
         query_text = state.get("query")
         d_texts = self.did_to_text(state, doc_ids)
         local_p_ids = [f"p{i+1}" for i in range(len(doc_ids))]
@@ -63,12 +82,19 @@ class Prompter(TextScorer):
         #llm_output = llm_response["message"]
         self.logger.debug("Raw LLM response:\n%s", llm_response)
 
-        scores = self._parse_scores_from_JSON(llm_response, len(doc_ids))
-        self.logger.debug(f"Parsed scores: {scores}")
+        int_scores = self._parse_scores_from_JSON(llm_response, len(doc_ids))
+        self.logger.debug(f"Parsed scores: {int_scores}")
 
         #scale scores to 0-1 then mult by self.query_rel_label 
         scale = self.query_rel_label / self.llm_max_label
-        scores = [s * scale for s in scores]
+        scores = [s * scale for s in int_scores]
+
+        # write exact-match cache entry (store scaled scores)
+        self.cache[cache_key] = {
+            "scores": [float(s) for s in scores],
+            "time": float(llm_response["prompt_time"]),
+            "prompt_tokens": llm_response.get("prompt_tokens", None),
+        }
 
         state["observation_times"] += [llm_response["prompt_time"]]
 
