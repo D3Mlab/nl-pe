@@ -479,30 +479,7 @@ class GPActiveLearner(BaseActiveLearner):
         pass
         #DEEPCOPY the model to pass into batch_af
 
-    def mmr_af(self, state,model, observed_mask_cpu, acq_func_name, k_acq=1):
-        pass 
-        #until we select k_acq cands, we greedily take the next candidate x that maximizes
-        #lambda * (af(x)) - (1-lambda) * max_{x' in selected} sim(x,x') 
-        # where af is the base acquisition function score for x  
-        # where sim is cosine similarity of the embeddings
-
-        #details
-        #read mmr lambda from config, via 'active_learning': {'mmr_lambda': mmr_lambda},
-        #call self.batch_af to get acquisition scores for all candidates (once, outside the greedy loop)
-        #the first candidate selected is the one with highest acquisition score (since no diversity penalty yet)
-
-        #then, we start a greedy loop for the remaining k_acq-1 candidates 
-        #in each step, we loop through the candidates we HAVE selected, and compute :
-        #for each selected candidate, the similarity to all possible unselected candidates, and store all results, then take the max  after all batches are done
-        # for now, assume we have a placeholder function that takes a set of selected and unseleected indicies 
-        # and (can use a mask) and cpu embeddings and the batch size (batch_size = self.embedding_batch_size) and returns what we want
-
-        #record timing:
-        #state["outer_acquisition_times"] time for the entire MMR loop
-        #state["mmr_knn_times"] #time that stores the TOTAL time spent computing the max sim to selected candidates across ALL batches and ALL greedy steps 
-    
-        #finally, match the return format of batch_af, which is a list of top-k indicies and scores
-
+    def mmr_af(self, state,model, observed_mask_cpu, acq_func_name, k_acq=1): 
         """
         Exact greedy MMR.
 
@@ -538,18 +515,6 @@ class GPActiveLearner(BaseActiveLearner):
             sorted=False,   # get unsorted scores to align with doc indicies for masking and later similarity computations
         )
         af_scores = torch.tensor(af_scores, dtype=torch.float32)
-
-        # base_idxs, base_scores = self.batch_af(
-        #     state,
-        #     model,
-        #     observed_mask_cpu,
-        #     acq_func_name,
-        #     k_acq=n_total,   # safe: batch_af streams embeddings
-        # )
-
-        # # rebuild dense AF tensor
-        # af_scores = torch.full((n_total,), float("-inf"), dtype=torch.float32)
-        # af_scores[base_idxs] = torch.tensor(base_scores) #af_scores now follows order of doc indicies, with -inf for observed cands and actual scores for unobserved cands
 
         ##########################################################
         # 2. Initialize MMR state
