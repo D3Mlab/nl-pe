@@ -9,7 +9,9 @@ def parse_int_list(s: str):
     try:
         return sorted(set(int(x.strip()) for x in s.split(",")))
     except ValueError:
-        raise ValueError("Second argument must be a comma-separated list of integers (e.g., '5,10').")
+        raise ValueError(
+            "Second argument must be a comma-separated list of integers (e.g., '5,10')."
+        )
 
 
 def get_max_q_index(columns):
@@ -57,7 +59,7 @@ def main():
     max_existing_q = get_max_q_index(df.columns)
     max_requested_q = max(target_counts)
 
-    # Assert CSV contains enough q_i columns
+    # Need at least q_(i-1)
     if max_existing_q < max_requested_q - 1:
         print(
             f"Warning: CSV only contains up to q_{max_existing_q}, "
@@ -65,14 +67,14 @@ def main():
         )
         sys.exit(0)
 
-    # Process each requested truncation
+    # Base directory = directory containing the CSV
+    base_dir = os.path.dirname(os.path.abspath(csv_path))
+
     for i in target_counts:
-        out_dir = f"{i}q"
+        out_dir = os.path.join(base_dir, f"{i}q")
         os.makedirs(out_dir, exist_ok=True)
 
-        # Keep q_id and q_0 ... q_{i-1}
         cols_to_keep = ["q_id"] + [f"q_{j}" for j in range(i)]
-
         truncated_df = df[cols_to_keep]
 
         out_path = os.path.join(out_dir, "gen_qs.csv")
