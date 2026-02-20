@@ -75,6 +75,5 @@ class TextScorer(Scorer):
             texts.append(self.doc_text_map[did])
 
         read_time = time.time() - start
-        state["doc_text_read_times"].append(read_time)
 
         return texts
