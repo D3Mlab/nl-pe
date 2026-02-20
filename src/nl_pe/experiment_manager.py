@@ -38,8 +38,9 @@ SCORER_CLASSES = {
 
 class ExperimentManager():
 
-    def __init__(self, exp_dir):
+    def __init__(self, exp_dir, skip_existing=False):
         self.exp_dir = exp_dir
+        self.skip_existing = skip_existing
         self.load_config()
         self.setup_logger()
         self.config['exp_dir'] = self.exp_dir
@@ -119,6 +120,15 @@ class ExperimentManager():
         scorer = scorer_cls(self.config)
 
         for qid, query, q_reforms in zip(qids, queries, q_reformulations):
+            query_result_dir = self.results_dir / f"{qid}"
+            detailed_results_path = query_result_dir / "detailed_results.json"
+            if self.skip_existing and detailed_results_path.exists():
+                self.logger.info(
+                    f"Skipping query {qid}: existing result found at {detailed_results_path}"
+                )
+                continue
+
+            agent = None
             try:
                 agent = agent_class(self.config, scorer)
                 
@@ -146,7 +156,8 @@ class ExperimentManager():
 
             finally:
                 #gpu memory cleanup after each query to prevent OOM in subsequent queries
-                del agent
+                if agent is not None:
+                    del agent
                 gc.collect()    
                 torch.cuda.empty_cache()
 
@@ -955,6 +966,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run experiments in the specified directory.")
     parser.add_argument("-c", "--exp-dir", type=str, required=True, help="Path to the experiment directory containing config.yaml")
     parser.add_argument("-e", "--exp-type", type=str, required=True, help="Name of the experiment method to run (e.g., index_corpus)")
+    parser.add_argument("-se", "--skip-existing", action="store_true", help="Skip per-query IR runs that already have detailed_results.json")
     args = parser.parse_args()
 
     load_dotenv()
@@ -965,6 +977,7 @@ if __name__ == "__main__":
     if not os.path.exists(config_path):
         print(f"No config.yaml found in {args.exp_dir}. Skipping experiment.")
     else:
-        manager = ExperimentManager(args.exp_dir)
+        manager = ExperimentManager(args.exp_dir, skip_existing=args.skip_existing)
         manager.run_experiment(args.exp_type)
+
 
