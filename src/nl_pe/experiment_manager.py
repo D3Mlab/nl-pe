@@ -91,7 +91,9 @@ class ExperimentManager():
         self.results_dir = Path(self.exp_dir) / 'per_query_results'
         self.results_dir.mkdir(exist_ok=True)
 
-        queries_path = self.data_config.get('q_text_csv', '')
+        queries_path = Path(self.data_config.get('q_text_csv', ''))
+        if not queries_path.is_file():
+            raise FileNotFoundError(f"Missing generated queries file: {queries_path}")
         qs_df = pd.read_csv(queries_path, header=0)
         qids = qs_df.iloc[:, 0].tolist()
         queries = qs_df.iloc[:, 1].tolist()

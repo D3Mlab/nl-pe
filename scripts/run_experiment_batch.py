@@ -25,7 +25,10 @@ def run_experiment_batch(batch_dir, exp_type, skip_existing=False):
         ]
         if skip_existing:
             cmd.append('-se')
-        subprocess.run(cmd, cwd='.', check=True)
+
+        result = subprocess.run(cmd, cwd='.')
+        if result.returncode != 0:
+            print(f"FAILED: {exp_dir}")
 
 
 if __name__ == "__main__":
