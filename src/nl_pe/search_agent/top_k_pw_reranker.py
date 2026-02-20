@@ -18,7 +18,7 @@ class TopKPWReranker():
 
     def rerank(self, state):
         #open scorer cache
-        prompt_name = '' #TODO -- update here and in GPActiveLearner
+        prompt_name = self.config.get('templates', {}).get('pw_prompt', '')
         qid = state['qid']
         self.scorer.open_cache(qid,prompt_name=prompt_name)
 

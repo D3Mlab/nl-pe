@@ -20,6 +20,7 @@ class TextScorer(Scorer):
         
         self.cache_path = self.config.get('data',{}).get('cache_path')
         self.texts_csv_path = self.config.get('data',{}).get('d_text_csv')
+        self.query_rel_label = float(self.config.get('gp',{}).get('query_rel_label'))
 
         # -------------------------
         # Load corpus texts ONCE

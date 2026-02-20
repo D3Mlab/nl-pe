@@ -10,7 +10,6 @@ import yaml
 import random
 import google
 import argparse
-import boto3
 import json
 import re
 from botocore.config import Config
@@ -159,75 +158,6 @@ class OpenAILLM(BaseLLM):
             "output_tokens": output_tokens
         }
     
-
-class NovaLLM(BaseLLM):
-    def __init__(self, config, model_name):
-        super().__init__(config,model_name)
-        self.bedrock_runtime = self.get_boto_client(assumed_role="arn:aws:iam::451191978663:role/service-role/a207918-ml-workspace-PracticalLawxOhJ-prod-use1", runtime=True)
-        self.model_id = model_name
-
-    def call_api(self, prompt):
-        body = json.dumps({"messages": [{
-                                        "role": "user",
-                                        "content": [{"text": prompt}]}],
-                            "inferenceConfig": {'temperature': self.temp}})
-        accept = 'application/json'
-        contentType = 'application/json'
-
-        start_time = time.perf_counter()
-        response = self.bedrock_runtime.invoke_model(body=body, modelId=self.model_id, accept=accept, contentType=contentType)
-        end_time = time.perf_counter()
-        duration = end_time - start_time
-
-        # Process and print the response
-        result = json.loads(response.get("body").read())
-        print(result)
-        input_tokens = result["usage"]["inputTokens"]
-        message = result['output']['message']['content'][0]['text']
-
-        return {
-            "message": message,
-            "prompt_time": duration,
-            "prompt_tokens": input_tokens  
-        }
-
-class ClaudeLLM(BaseLLM):
-    def __init__(self, config, model_name):
-        super().__init__(config,model_name)
-        self.bedrock_runtime = self.get_boto_client(assumed_role="arn:aws:iam::451191978663:role/service-role/a207918-ml-workspace-PracticalLawxOhJ-prod-use1", runtime=True)
-        self.model_id = model_name
-
-    def call_api(self, prompt):
-        body=json.dumps(
-            {
-                "anthropic_version": "bedrock-2023-05-31",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [{"type": "text", "text": prompt}],
-                    }
-                ],
-                "temperature": self.temp,
-                'max_tokens': 1000000
-            }
-        )
-
-        start_time = time.perf_counter()
-        response = self.bedrock_runtime.invoke_model(modelId=self.model_id,body=body)
-        end_time = time.perf_counter()
-        duration = end_time - start_time
-
-        # Process and print the response
-        result = json.loads(response.get("body").read())
-        input_tokens = result["usage"]["input_tokens"]
-        output_list = result.get("content", [])
-        message = output_list[0]["text"]
-
-        return {
-            "message": message,
-            "prompt_time": duration,
-            "prompt_tokens": input_tokens  
-        }
 
 
 class GeminiLLM(BaseLLM):

@@ -24,17 +24,68 @@ class Prompter(TextScorer):
         self.llm = model_class(config,self.model_name)
         self.jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader(searchpath=self.template_dir))
 
+        if self.template_config.get('pw_prompt'):
+            self.pw_prompt_path = f"{self.template_config.get('pw_prompt')}.jinja2"
+
+        #hardcode query_rel_label for pw_umb since it uses a 0-3 scale instead of 0-1
+        if self.pw_prompt_path == "pw_umb.jinja2":
+            self.llm_max_label = 3
 
     def score(self, state, doc_ids):
         #add scoring prompt to cache name if it doesn't end with it
-        pass
+        
+        self.logger.debug(f"PW LLM Scoring doc_ids: {doc_ids}")
+        #track how often cache is used
+        cache_use_counter = state.setdefault("cache_use_counter", {})
+        cache_use_counter.setdefault("used", 0)
+        cache_use_counter.setdefault("not_used", 0)
+
+        #check cache
+
+        #if not cache:
+        query_text = state.get("query")
+        d_texts = self.did_to_text(state, doc_ids)
+        local_p_ids = [f"p{i+1}" for i in range(len(doc_ids))]
+
+        prompt_dict = {
+            'query' : query_text,
+            "local_p_ids": local_p_ids,
+            "p_texts": d_texts,
+            "list_len": len(doc_ids),
+        }
+
+        prompt = self.render_prompt(prompt_dict, self.pw_prompt_path)
+
+        self.logger.debug(f"Using template: {self.pw_prompt_path}")
+        self.logger.debug("Rendered prompt:\n%s", prompt)
+
+        llm_response = self.llm.prompt(prompt)
+        #llm_output = llm_response["message"]
+        self.logger.debug("Raw LLM response:\n%s", llm_response)
+
+        scores = self._parse_scores_from_JSON(llm_response, len(doc_ids))
+        self.logger.debug(f"Parsed scores: {scores}")
+
+        #scale scores to 0-1 then mult by self.query_rel_label 
+        scale = self.query_rel_label / self.llm_max_label
+        scores = [s * scale for s in scores]
+
+        state["observation_times"] += [llm_response["prompt_time"]]
+
+        if 'prompt_tokens' not in state:
+            state['prompt_tokens'] = []
+        state['prompt_tokens'].append(llm_response.get('prompt_tokens', None))
+
+        return scores
 
     def pw_rerank(self, state):
+
 
         if state["current_batch"] == None:
             return
 
         instance = state['instance']
+    
         query = instance["query"]["text"]
 
         psg_list_batch = state["current_batch"]
@@ -129,6 +180,55 @@ class Prompter(TextScorer):
         template = self.jinja_env.get_template(template_path)
         return template.render(prompt_dict)
 
+    def _parse_scores_from_JSON(self, llm_response, expected_len):
+        """
+        Extract scores from llm_response["JSON_dict"].
+
+        Expected structure:
+            {"scores": [1,2,3]}
+        or
+            {"scores": "[1,2,3]"}
+        """
+
+        json_dict = llm_response.get("JSON_dict")
+
+        if not json_dict:
+            raise ValueError("LLM response did not contain valid JSON_dict.")
+
+        if "scores" not in json_dict:
+            raise ValueError("JSON response missing 'scores' key.")
+
+        raw_scores = json_dict["scores"]
+
+        # Case 1: Already a list
+        if isinstance(raw_scores, list):
+            scores = raw_scores
+
+        # Case 2: String representation of list
+        elif isinstance(raw_scores, str):
+            try:
+                scores = json.loads(raw_scores)
+            except Exception:
+                # fallback: try python literal parsing
+                scores = eval(raw_scores)
+
+        else:
+            raise ValueError(f"'scores' must be list or string, got {type(raw_scores)}")
+
+        if not isinstance(scores, list):
+            raise ValueError("Parsed scores is not a list.")
+
+        if len(scores) != expected_len:
+            raise ValueError(
+                f"Score length mismatch: expected {expected_len}, got {len(scores)}"
+            )
+
+        try:
+            scores = [int(s) for s in scores]
+        except Exception:
+            raise ValueError("Scores could not be cast to integers.")
+
+        return scores
 
   
 

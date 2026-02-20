@@ -139,7 +139,7 @@ class GPActiveLearner(BaseActiveLearner):
         state["observation_times"] = []
     
         #read scorer cache
-        prompt_name = '' #TODO -- update here and in TopKPWReranker
+        prompt_name = self.config.get('templates', {}).get('pw_prompt', '')
         qid = state['qid']
         self.scorer.open_cache(qid,prompt_name=prompt_name)
 

@@ -1,0 +1,31 @@
+Assign one of the integer scores below to each of the {{ list_len }} passages based on its relevance to the query.
+
+Following the order of the passages, output your answer strictly as JSON with the "scores" key containing a Python-style list of integers with length {{ list_len }}.
+
+<Label Instructions>
+3 - The passage is dedicated to the query and contains the exact answer.
+
+2 - The passage has some answer for the query, but the answer may be unclear or hidden amongst extraneous information.
+
+1 - The passage seems related to the query but does not answer it.
+
+0 - The passage has nothing to do with the query.
+</Label Instructions>
+
+<Query>
+{{ query }}
+</Query>
+
+<Passages>
+{% for pid in local_p_ids %}
+  {{ pid }}: {{ p_texts[loop.index0] }}
+{% endfor %}
+</Passages>
+
+<Example Output Format>
+{
+"scores": "[<score for p1>, <score for p2>, ...]"
+}
+</Example Output Format>
+
+<Output>

@@ -26,7 +26,7 @@ class CEScorer(TextScorer):
         )
         self.model.model.eval()
         self.batch_size = self.config.get('data',{}).get('embedding_batch_size')
-        self.query_rel_label = float(self.config.get('gp',{}).get('query_rel_label'))
+        
 
     def score(self,state,doc_ids):
         batch_size = min(self.batch_size, len(doc_ids))
@@ -35,12 +35,6 @@ class CEScorer(TextScorer):
         cache_use_counter.setdefault("used", 0)
         cache_use_counter.setdefault("not_used", 0)
 
-        self.logger.debug(
-            "CEScorer.score called | qid=%s | n_doc_ids=%d | batch_size=%d",
-            state.get("qid", "unknown"),
-            len(doc_ids),
-            batch_size,
-        )
 
         scores = []
         times = []
