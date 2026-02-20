@@ -31,6 +31,10 @@ class CEScorer(TextScorer):
     def score(self,state,doc_ids):
         batch_size = min(self.batch_size, len(doc_ids))
 
+        cache_use_counter = state.setdefault("cache_use_counter", {})
+        cache_use_counter.setdefault("used", 0)
+        cache_use_counter.setdefault("not_used", 0)
+
         self.logger.debug(
             "CEScorer.score called | qid=%s | n_doc_ids=%d | batch_size=%d",
             state.get("qid", "unknown"),
@@ -60,6 +64,11 @@ class CEScorer(TextScorer):
             len(doc_ids) - len(missing_doc_ids),
             len(missing_doc_ids),
         )
+
+        if len(missing_doc_ids) < len(doc_ids):
+            cache_use_counter["used"] += 1
+        else:
+            cache_use_counter["not_used"] += 1
 
         # If ALL present → return immediately
         if len(missing_doc_ids) == 0:
@@ -121,6 +130,7 @@ class CEScorer(TextScorer):
 
         return scores 
     
+
 
 
 
