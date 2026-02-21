@@ -476,8 +476,61 @@ class GPActiveLearner(BaseActiveLearner):
 
 
     def fantasy_af(self, state, model, observed_mask_cpu, acq_func_name, k_acq=1):
-        pass
-        #DEEPCOPY the model to pass into batch_af
+        """
+        Sequential fantasy acquisition.
+
+        Selects candidates one-at-a-time using the base acquisition function
+        (`batch_af` with `k_acq=1`), then "fantasizes" an observation by
+        sampling from the model posterior at the selected point and updates the
+        model in-place via `set_train_data`.
+
+        Notes:
+        - Model mutation is intentionally in-place and transient to this
+          acquisition call (the outer loop rebuilds the GP each iteration).
+        - Uses a local observed mask so we don't mutate the caller mask.
+        """
+
+        outer_start = time.time()
+
+        selected = []
+        selected_scores = []
+
+        for _ in range(k_acq):
+            top_idxs, top_scores = self.batch_af(
+                state,
+                model,
+                observed_mask_cpu,
+                acq_func_name,
+                k_acq=1,
+                sorted=True,
+            )
+
+            idx = int(top_idxs[0])
+            score = float(top_scores[0])
+
+            selected.append(idx)
+            selected_scores.append(score)
+            observed_mask_cpu[idx] = True
+
+            # Fantasy update: sample pseudo-label from posterior at selected x
+            x_sel = self.d_embs_cpu[idx:idx + 1].to(self.device)
+            with torch.no_grad(), self.fast_ctx:
+                y_fantasy = model(x_sel).sample().reshape(-1)
+
+            train_x = model.train_inputs[0]
+            train_y = model.train_targets
+
+            y_fantasy = y_fantasy.to(device=train_y.device, dtype=train_y.dtype)
+            new_train_x = torch.cat([train_x, x_sel], dim=0)
+            new_train_y = torch.cat([train_y, y_fantasy], dim=0)
+
+            model.set_train_data(inputs=new_train_x, targets=new_train_y, strict=False)
+
+        if "outer_acquisition_times" not in state:
+            state["outer_acquisition_times"] = []
+        state["outer_acquisition_times"].append(round(time.time() - outer_start))
+
+        return selected, selected_scores
 
     def mmr_af(self, state,model, observed_mask_cpu, acq_func_name, k_acq=1): 
         """
@@ -816,6 +869,7 @@ class ExactGPModel(gpytorch.models.ExactGP):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
 
 
 
