@@ -50,14 +50,23 @@ class QueryGenerator():
 
         #Prompter
         prompter = Prompter(self.config)
+        q_gen_times = []
 
         for q_id, q in zip(q_ids, q_texts):
-
             prompt_dict = f_make_prompt_dict(q)
             response = prompter.prompt_from_temp(template_path, prompt_dict)
+            q_gen_times.append({"qid": q_id, "gen_time": response.get("prompt_time")})
             self.logger.debug(f"Full response for q_id={q_id}: {response}")
 
             f_write_row(q_id, q, response)
+
+        q_gen_times_path = Path(self.exp_dir) / "q_gen_times.csv"
+        with open(q_gen_times_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["qid", "gen_time"])
+            writer.writeheader()
+            writer.writerows(q_gen_times)
+
+        self._csv_file.close()
 
     def _write_eqr_row(self, q_id, q, response):
 

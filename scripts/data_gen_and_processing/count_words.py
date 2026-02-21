@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-
 import sys
 import csv
 import statistics
+import ctypes
+
+csv.field_size_limit(ctypes.c_ulong(-1).value // 2)
 
 def simple_token_estimate(text: str) -> int:
     """
