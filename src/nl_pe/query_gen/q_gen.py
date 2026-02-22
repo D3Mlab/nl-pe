@@ -51,20 +51,35 @@ class QueryGenerator():
         #Prompter
         prompter = Prompter(self.config)
         q_gen_times = []
+        parsing_error_count = 0
 
         for q_id, q in zip(q_ids, q_texts):
             prompt_dict = f_make_prompt_dict(q)
             response = prompter.prompt_from_temp(template_path, prompt_dict)
-            q_gen_times.append({"qid": q_id, "gen_time": response.get("prompt_time")})
             self.logger.debug(f"Full response for q_id={q_id}: {response}")
 
-            f_write_row(q_id, q, response)
+            parse_success = f_write_row(q_id, q, response)
+            parse_success = bool(parse_success)
+            if not parse_success:
+                parsing_error_count += 1
 
-        q_gen_times_path = Path(self.exp_dir) / "q_gen_times.csv"
+            q_gen_times.append(
+                {
+                    "qid": q_id,
+                    "parse_success": int(parse_success),
+                    "gen_time": response.get("prompt_time"),
+                }
+            )
+
+        q_gen_times_path = Path(self.exp_dir) / "q_gen_times_and_parsing.csv"
         with open(q_gen_times_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["qid", "gen_time"])
+            writer = csv.DictWriter(f, fieldnames=["qid", "parse_success", "gen_time"])
             writer.writeheader()
             writer.writerows(q_gen_times)
+
+        self.logger.info(
+            f"Query generation parsing errors: {parsing_error_count}/{len(q_ids)}"
+        )
 
         self._csv_file.close()
 
@@ -93,6 +108,16 @@ class QueryGenerator():
         if not isinstance(elaborations, list):
             elaborations = []
 
+        parse_success = len(topics) >= self.k_new_qs and len(elaborations) >= self.k_new_qs
+        if not parse_success:
+            self.logger.warning(
+                "Parsing error for q_id=%s in _write_eqr_row: expected >=%d topics/elaborations, got topics=%d elaborations=%d",
+                q_id,
+                self.k_new_qs,
+                len(topics),
+                len(elaborations),
+            )
+
         # fill q_i (elaborations-as-queries) and k_i (topics)
         for i in range(1, self.k_new_qs + 1):
             if i <= len(elaborations):
@@ -107,6 +132,7 @@ class QueryGenerator():
 
         self.writer.writerow(row)
         self._csv_file.flush()
+        return parse_success
 
 
     def _write_q_decomp_row(self, q_id, q, response):
@@ -134,6 +160,15 @@ class QueryGenerator():
         if not isinstance(new_queries, list):
             new_queries = []
 
+        parse_success = len(new_queries) >= self.k_new_qs
+        if not parse_success:
+            self.logger.warning(
+                "Parsing error for q_id=%s in _write_q_decomp_row: expected >=%d new queries, got %d",
+                q_id,
+                self.k_new_qs,
+                len(new_queries),
+            )
+
         # fill q_1 ... q_k_new_qs
         for i in range(1, self.k_new_qs + 1):
             if i <= len(new_queries):
@@ -142,7 +177,9 @@ class QueryGenerator():
                 # qi, ..., q_k_new_qs should be recorded as PARSING_ERROR
                 row[f"q_{i}"] = "PARSING_ERROR"
 
-        self.writer.writerow(row)    
+        self.writer.writerow(row)
+        self._csv_file.flush()
+        return parse_success
     
     def _make_q_decomp_prompt_dict(self, q):
         prompt_dict = {
