@@ -24,12 +24,14 @@ class Prompter(TextScorer):
         self.llm = model_class(config,self.model_name)
         self.jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader(searchpath=self.template_dir))
 
+        self.pw_prompt_path = None
+
         if self.template_config.get('pw_prompt'):
             self.pw_prompt_path = f"{self.template_config.get('pw_prompt')}.jinja2"
 
         #hardcode query_rel_label for pw_umb since it uses a 0-3 scale instead of 0-1
         if self.pw_prompt_path == "pw_umb.jinja2":
-            self.llm_max_label = 3
+                self.llm_max_label = 3
 
     def score(self, state, doc_ids):
         #add scoring prompt to cache name if it doesn't end with it

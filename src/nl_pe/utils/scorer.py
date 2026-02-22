@@ -20,7 +20,7 @@ class TextScorer(Scorer):
         
         self.cache_path = self.config.get('data',{}).get('cache_path')
         self.texts_csv_path = self.config.get('data',{}).get('d_text_csv')
-        
+
         query_rel_label = self.config.get('gp', {}).get('query_rel_label')
 
         if query_rel_label is not None:
@@ -36,10 +36,11 @@ class TextScorer(Scorer):
 
         self.doc_text_map = {}
 
-        with open(self.texts_csv_path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                self.doc_text_map[str(row["d_id"])] = row["d_text"]
+        if self.texts_csv_path:
+            with open(self.texts_csv_path, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    self.doc_text_map[str(row["d_id"])] = row["d_text"]
 
         elapsed = time.time() - start
         self.logger.info(
