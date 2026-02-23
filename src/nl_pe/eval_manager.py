@@ -266,7 +266,7 @@ class EvalManager:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate an experiment based on a config file.")
     parser.add_argument("-c", "--eval-dir", type=str, help="The path to the evaluation dir containing eval_config.yaml")
-    parser.add_argument("--skip-existing", action="store_true", help="Skip evaluation if output files already exist.")
+    parser.add_argument("-se", "--skip-existing", action="store_true", help="Skip evaluation if output files already exist.")
     args = parser.parse_args()
 
     eval_manager = EvalManager(args.eval_dir, skip_existing=args.skip_existing)

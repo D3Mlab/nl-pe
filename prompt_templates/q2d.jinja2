@@ -1,0 +1,16 @@
+Given a query, generate a set of {{k_new}} possible answers to the query.
+
+<query>
+{{q}}
+</query>
+
+Respond ONLY with a single valid JSON object of the following form:
+
+{
+  "answer_list": [
+    "<answer_1>",
+    "<answer_2>",
+    ...
+    "<answer_{{k_new}}>"
+  ]
+}

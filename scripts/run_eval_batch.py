@@ -25,7 +25,7 @@ def run_eval_batch(e, skip_existing):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run evaluation for a batch of experiments in the specified directory.")
     parser.add_argument("-c", "--eval-dir", type=str, required=True, help="The path to the directory containing the batch of evaluations.")
-    parser.add_argument("--skip-existing", action="store_true", help="Skip evaluation if output files already exist")
+    parser.add_argument("-se","--skip-existing", action="store_true", help="Skip evaluation if output files already exist")
     args = parser.parse_args()
 
     run_eval_batch(args.eval_dir, args.skip_existing)
