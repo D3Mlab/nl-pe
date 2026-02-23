@@ -223,3 +223,54 @@ class QueryGenerator():
         self.writer = csv.DictWriter(self._csv_file, fieldnames=fieldnames)
         self.writer.writeheader()
         return self.writer
+
+    def _write_q2d_row(self, q_id, q, response):
+        """
+        Writes a q2d (query-to-document style answer expansion) row.
+
+        Expected JSON format from LLM:
+        {
+            "answer_list": [<answer_1>, ..., <answer_k>]
+        }
+
+        Output CSV columns remain:
+        q_id, q_0, q_1, ..., q_k_new_qs
+        """
+
+        row = {
+            "q_id": q_id,
+            "q_0": q,
+        }
+
+        answers = None
+
+        # prompter adds JSON_dict if parsing succeeded
+        if isinstance(response, dict) and "JSON_dict" in response:
+            json_data = response["JSON_dict"]
+            if isinstance(json_data, dict):
+                answers = json_data.get("answer_list")
+
+        # normalize failures
+        if not isinstance(answers, list):
+            answers = []
+
+        parse_success = len(answers) >= self.k_new_qs
+        if not parse_success:
+            self.logger.warning(
+                "Parsing error for q_id=%s in _write_q2d_row: expected >=%d answers, got %d",
+                q_id,
+                self.k_new_qs,
+                len(answers),
+            )
+
+        # Fill q_1 ... q_k_new_qs
+        for i in range(1, self.k_new_qs + 1):
+            if i <= len(answers):
+                row[f"q_{i}"] = answers[i - 1]
+            else:
+                row[f"q_{i}"] = "PARSING_ERROR"
+
+        self.writer.writerow(row)
+        self._csv_file.flush()
+
+        return parse_success
