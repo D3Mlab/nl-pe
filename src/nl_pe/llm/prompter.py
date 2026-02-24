@@ -34,6 +34,7 @@ class Prompter(TextScorer):
                 self.llm_max_label = 3
 
     def score(self, state, doc_ids):
+        state.setdefault("observation_times", [])
         #add scoring prompt to cache name if it doesn't end with it
         
         self.logger.debug(f"PW LLM Scoring doc_ids: {doc_ids}")
