@@ -3,6 +3,10 @@ import os
 import time
 import csv
 from nl_pe.utils.setup_logging import setup_logging
+import sys
+
+max_int = min(sys.maxsize, 2_147_483_647)
+csv.field_size_limit(max_int)
 
 class Scorer():
 

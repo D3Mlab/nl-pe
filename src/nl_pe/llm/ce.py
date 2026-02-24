@@ -59,10 +59,10 @@ class CEScorer(TextScorer):
             len(missing_doc_ids),
         )
 
-        if len(missing_doc_ids) < len(doc_ids):
-            cache_use_counter["used"] += 1
+        if len(missing_doc_ids) == 0:
+            cache_use_counter["used"] += 1      # ALL docs cached
         else:
-            cache_use_counter["not_used"] += 1
+            cache_use_counter["not_used"] += 1  # at least one miss
 
         # If ALL present → return immediately
         if len(missing_doc_ids) == 0:
