@@ -29,15 +29,21 @@ def path_has_ce_dir(p: Path) -> bool:
     return any("ce" in part.lower() for part in p.parts)
 
 
-def load_k_acq_and_n_obs(config_path: Path) -> tuple[int, int]:
+def load_k_acq_and_n_obs(config_path: Path):
     with config_path.open("r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     al = (cfg or {}).get("active_learning", {}) or {}
+
+    if "k_acq" not in al or "n_obs_iterations" not in al:
+        return None
+
     k_acq = int(al["k_acq"])
-    n_obs = int(al["n_obs_iterations"])
-    if k_acq <= 0 or n_obs < 0:
-        raise ValueError(f"Bad values in {config_path}: k_acq={k_acq}, n_obs_iterations={n_obs}")
+    n_obs = int(al.get("n_obs_iterations"))
+
+    if k_acq <= 0:
+        return None
+
     return k_acq, n_obs
 
 
@@ -85,7 +91,12 @@ def process_detailed_results(dr_path: Path, make_backup: bool = True) -> bool:
         print(f"[SKIP] No config.yaml at expected location: {config_path}")
         return False
 
-    k_acq, n_obs = load_k_acq_and_n_obs(config_path)
+    params = load_k_acq_and_n_obs(config_path)
+    if params is None:
+        print(f"[SKIP] No k_acq in config: {config_path}")
+        return False
+
+    k_acq, n_obs = params
 
     with dr_path.open("r", encoding="utf-8") as f:
         data = json.load(f)
