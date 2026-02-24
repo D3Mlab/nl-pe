@@ -67,7 +67,7 @@ class CEScorer(TextScorer):
         # If ALL present → return immediately
         if len(missing_doc_ids) == 0:
             self.logger.debug("All scores found in cache; skipping CE inference")
-            state["observation_times"] += times
+            state["observation_times"].append(float(sum(times)))  # batch-equivalent cache time
             return scores
 
         d_texts = self.did_to_text(state, doc_ids)
