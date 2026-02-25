@@ -264,6 +264,78 @@ class BaseEmbedder(ABC):
         state['knn_scores'] = distances[0].tolist()
         state['knn_time'] = time.time() - start_time
 
+
+    def exact_knn_from_faiss_gpu(self, state) -> list[str]:
+        start_time = time.time()
+        query = state.get("query")
+
+        # 1) Embed query (likely on inference_device), then move to tensor ops device
+        query_emb = self.embed_documents_batch(
+            [query],
+            prompt=self.embedding_config.get("query_prompt", "")
+        )[0]
+        state["query_emb"] = query_emb
+
+        device = torch.device(self.tensor_ops_device)
+        q = query_emb.to(device, non_blocking=True).float()  # shape: (d,)
+
+        # 2) Load doc_ids + FAISS index (still the source of embeddings)
+        doc_ids = pickle.load(open(self.embeddings_path + "_doc_ids.pkl", "rb"))
+        index = faiss.read_index(self.embeddings_path)
+        n_total = index.ntotal
+
+        # 3) Reconstruct ALL embeddings once -> pinned CPU tensor (MMR-style)
+        # NOTE: reconstruct_n returns float32 numpy; keep contiguous.
+        xb = index.reconstruct_n(0, n_total)  # shape: (n_total, d) as np.ndarray
+        d_embs_cpu = torch.from_numpy(xb).float().pin_memory()
+
+        batch_size = int(self.similarity_batch_size or n_total)
+        k = int(self.k)
+
+        # running top-k across batches
+        inc_scores = None  # torch tensor on CPU
+        inc_indices = None  # torch tensor on CPU
+
+        with torch.no_grad():
+            for start in range(0, n_total, batch_size):
+                end = min(start + batch_size, n_total)
+
+                # move batch to GPU (like your MMR chunk)
+                batch = d_embs_cpu[start:end].to(device, non_blocking=True)  # (B, d)
+
+                # dot product similarity (cosine if embeddings are normalized)
+                scores = torch.matmul(batch, q)  # (B,)
+
+                # get this batch top-k
+                k_here = min(k, scores.numel())
+                batch_top_scores, batch_top_local = torch.topk(scores, k=k_here, largest=True)
+                batch_top_global = batch_top_local + start
+
+                # move to CPU for merge (keeps GPU memory low)
+                batch_top_scores = batch_top_scores.detach().cpu()
+                batch_top_global = batch_top_global.detach().cpu()
+
+                if inc_scores is None:
+                    inc_scores = batch_top_scores
+                    inc_indices = batch_top_global
+                else:
+                    merged_scores = torch.cat([inc_scores, batch_top_scores], dim=0)
+                    merged_indices = torch.cat([inc_indices, batch_top_global], dim=0)
+
+                    k_merge = min(k, merged_scores.numel())
+                    inc_scores, pos = torch.topk(merged_scores, k=k_merge, largest=True)
+                    inc_indices = merged_indices[pos]
+
+                del batch, scores  # free GPU tensors promptly
+
+        top_idx = inc_indices.tolist()
+        top_scores = inc_scores.tolist()
+
+        state["top_k_psgs"] = [str(doc_ids[i]) for i in top_idx]
+        state["init_knn_pid_list"] = copy.deepcopy(state["top_k_psgs"])
+        state["knn_scores"] = top_scores
+        state["knn_time"] = time.time() - start_time
+
     def exact_knn_from_db(self, state) -> list[str]:
         """
         Batched KNN retrieval:

@@ -16,6 +16,11 @@ class TopKPWReranker():
         #batch size
         self.k_acq = int(self.config.get('active_learning', {}).get("k_acq", 1))
 
+        # max number of docs to score (like AL budget)
+        self.n_obs_iterations = int(
+            self.config.get('active_learning', {}).get('n_obs_iterations', 0)
+        )
+
     def rerank(self, state):
         #open scorer cache
         prompt_name = self.config.get('templates', {}).get('pw_prompt', '')
@@ -23,6 +28,11 @@ class TopKPWReranker():
         self.scorer.open_cache(qid,prompt_name=prompt_name)
 
         doc_ids = [str(d) for d in state['top_k_psgs']]
+
+        # Respect observation budget
+        if self.n_obs_iterations and self.n_obs_iterations > 0:
+            doc_ids = doc_ids[:self.n_obs_iterations]
+
         n_total = len(doc_ids)
         
         state['observation_times'] = []
@@ -50,7 +60,13 @@ class TopKPWReranker():
         sorted_scores = [float(s) for _, s in doc_score_pairs]
 
         # Update state
-        state['top_k_psgs'] = sorted_doc_ids
+        # Only reorder the scored subset
+        original = [str(d) for d in state['top_k_psgs']]
+
+        # Append untouched tail (if any)
+        remaining = original[len(sorted_doc_ids):]
+
+        state['top_k_psgs'] = sorted_doc_ids + remaining
         state['top_k_rel_scores'] = sorted_scores
 
         # write scorer cache
