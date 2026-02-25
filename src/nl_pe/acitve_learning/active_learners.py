@@ -126,6 +126,7 @@ class GPActiveLearner(BaseActiveLearner):
         acq_strategy = getattr(self, acq_strategy_name)
         k_acq = int(self.al_config.get("k_acq", 1))  # how many top-k candidates each acquisition call returns
 
+        self.fantasy_method = (self.config.get("active_learning", {}).get("fantasy_method", "").lower())
 
         # Initialize lists
         state["selected_doc_ids"] = []
@@ -512,10 +513,18 @@ class GPActiveLearner(BaseActiveLearner):
             selected_scores.append(score)
             observed_mask_cpu[idx] = True
 
-            # Fantasy update: sample pseudo-label from posterior at selected x
+            # Fantasy update: 
             x_sel = self.d_embs_cpu[idx:idx + 1].to(self.device)
+
             with torch.no_grad(), self.fast_ctx:
-                y_fantasy = model(x_sel).sample().reshape(-1)
+                pred = model(x_sel)
+
+                if self.fantasy_method == "mean":
+                    # deterministic posterior mean
+                    y_fantasy = pred.mean.reshape(-1)
+                else:
+                    # default behavior: sample (empty string, "sample", etc.)
+                    y_fantasy = pred.sample().reshape(-1)
 
             train_x = model.train_inputs[0]
             train_y = model.train_targets
