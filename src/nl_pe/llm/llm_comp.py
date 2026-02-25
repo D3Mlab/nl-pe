@@ -4,6 +4,9 @@ import time
 from openai import OpenAI
 from dotenv import load_dotenv
 import yaml
+from google import genai
+from google.genai import types
+from google.api_core.exceptions import ResourceExhausted
 #import google.generativeai as genai
 #from google.generativeai.types import HarmCategory, HarmBlockThreshold
 #from google.api_core.exceptions import GoogleAPICallError, RetryError, InvalidArgument
@@ -12,7 +15,7 @@ import google
 import argparse
 import json
 import re
-from botocore.config import Config
+#from botocore.config import Config
 from typing import Optional
 from nl_pe.utils.setup_logging import setup_logging
 
@@ -158,56 +161,107 @@ class OpenAILLM(BaseLLM):
             "output_tokens": output_tokens
         }
     
-
-
 class GeminiLLM(BaseLLM):
     def __init__(self, config, model_name):
-        super().__init__(config,model_name)
+        super().__init__(config, model_name)
 
-        self.GEMINI_API_KEYS = [
-            value for key, value in sorted(os.environ.items()) if key.startswith('GEMINI_API_KEY_')
-        ]
-        self.key_exhausted_status = [False] * len(self.GEMINI_API_KEYS)  # False indicates the key is not exhausted
-        self.current_key_index = 0
-        genai.configure(api_key=self.GEMINI_API_KEYS[self.current_key_index])
-        self.model = genai.GenerativeModel(self.model_name)
-        self.safety_settings = {HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,}
+        # Uses GOOGLE_API_KEY from environment automatically
+        self.client = genai.Client()
 
     def call_api(self, prompt):
         start_time = time.perf_counter()
-        generation_config=genai.types.GenerationConfig(
-            temperature=self.temp)
-        response = self.model.generate_content(prompt,
-                                                safety_settings = self.safety_settings,
-                                                generation_config=generation_config)
-        end_time = time.perf_counter()
-        duration = end_time - start_time
+
+        safety_settings = [
+            types.SafetySetting(
+                category="HARM_CATEGORY_HARASSMENT",
+                threshold="BLOCK_NONE",
+            ),
+            types.SafetySetting(
+                category="HARM_CATEGORY_HATE_SPEECH",
+                threshold="BLOCK_NONE",
+            ),
+            types.SafetySetting(
+                category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                threshold="BLOCK_NONE",
+            ),
+            types.SafetySetting(
+                category="HARM_CATEGORY_DANGEROUS_CONTENT",
+                threshold="BLOCK_NONE",
+            ),
+        ]
+
+        config = types.GenerateContentConfig(
+            temperature=self.temp,
+            safety_settings=safety_settings,
+            response_mime_type="application/json",
+        )
+
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=prompt,
+            config=config,
+        )
+
+        duration = time.perf_counter() - start_time
+
+        usage = getattr(response, "usage_metadata", None)
+
         return {
             "message": response.text,
-            "prompt_time": duration  
+            "prompt_time": duration,
+            "prompt_tokens": getattr(usage, "prompt_token_count", None),
+            "output_tokens": getattr(usage, "candidates_token_count", None),
         }
 
+#OLD GEMINI CLASS
+# class GeminiLLM(BaseLLM):
+#     def __init__(self, config, model_name):
+#         super().__init__(config,model_name)
 
-    def handle_exception(self, e, attempt):
-        if isinstance(e, google.api_core.exceptions.ResourceExhausted):
-            self.logger.warning(f"Quota reached for current Gemini API key.")
-            self.key_exhausted_status[self.current_key_index] = True 
+#         self.GEMINI_API_KEYS = [
+#             value for key, value in sorted(os.environ.items()) if key.startswith('GEMINI_API_KEY_')
+#         ]
+#         self.key_exhausted_status = [False] * len(self.GEMINI_API_KEYS)  # False indicates the key is not exhausted
+#         self.current_key_index = 0
+#         genai.configure(api_key=self.GEMINI_API_KEYS[self.current_key_index])
+#         self.model = genai.GenerativeModel(self.model_name)
+#         self.safety_settings = {HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+#                                 HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+#                                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+#                                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,}
 
-            available_keys = [i for i, exhausted in enumerate(self.key_exhausted_status) if not exhausted]
-            if available_keys:
-                self.current_key_index = random.choice(available_keys)
-                self.logger.info(f"Quota reached for current API key. Switching to key index {self.current_key_index}")
-                genai.configure(api_key=self.GEMINI_API_KEYS[self.current_key_index])
-            else:
-                self.logger.error("All API keys have been exhausted.")
-                self.key_exhausted_status = [False] * len(self.GEMINI_API_KEYS)  # False indicates the key is not exhausted
-                self.current_key_index = 0
-        else:
-            self.logger.info(f"Attempt {attempt + 1} failed: {e}")
-            pass
+#     def call_api(self, prompt):
+#         start_time = time.perf_counter()
+#         generation_config=genai.types.GenerationConfig(
+#             temperature=self.temp)
+#         response = self.model.generate_content(prompt,
+#                                                 safety_settings = self.safety_settings,
+#                                                 generation_config=generation_config)
+#         end_time = time.perf_counter()
+#         duration = end_time - start_time
+#         return {
+#             "message": response.text,
+#             "prompt_time": duration  
+#         }
+
+
+#     def handle_exception(self, e, attempt):
+#         if isinstance(e, google.api_core.exceptions.ResourceExhausted):
+#             self.logger.warning(f"Quota reached for current Gemini API key.")
+#             self.key_exhausted_status[self.current_key_index] = True 
+
+#             available_keys = [i for i, exhausted in enumerate(self.key_exhausted_status) if not exhausted]
+#             if available_keys:
+#                 self.current_key_index = random.choice(available_keys)
+#                 self.logger.info(f"Quota reached for current API key. Switching to key index {self.current_key_index}")
+#                 genai.configure(api_key=self.GEMINI_API_KEYS[self.current_key_index])
+#             else:
+#                 self.logger.error("All API keys have been exhausted.")
+#                 self.key_exhausted_status = [False] * len(self.GEMINI_API_KEYS)  # False indicates the key is not exhausted
+#                 self.current_key_index = 0
+#         else:
+#             self.logger.info(f"Attempt {attempt + 1} failed: {e}")
+#             pass
 
 
 
@@ -222,7 +276,8 @@ if __name__ == "__main__":
         config = yaml.safe_load(config_file)
 
     load_dotenv()
-    llm = NovaLLM(config, config.get('llm', {}).get('model_name'))
+    #llm = NovaLLM(config, config.get('llm', {}).get('model_name'))
+    llm = GeminiLLM(config, config.get('llm', {}).get('model_name'))
 
     response = llm.prompt(args.prompt)
     print(f'LLM response: {response}')
