@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
 def plot_trec_metrics_vs_k(step_size, k, metrics, method_paths, method_names,
-                 line_styles=None, y_mins=None, y_maxs=None, title=None):
+                 line_styles=None, y_mins=None, y_maxs=None, title=None, dataset = '', baselines=None):
     if k % step_size != 0:
         print('k must be divisible by step size')
         return
