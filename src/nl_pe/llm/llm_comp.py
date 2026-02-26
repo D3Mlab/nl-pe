@@ -30,8 +30,8 @@ class BaseLLM(ABC):
         self.model_name = model_name
 
         self.llm_config = self.config.get('llm', {})
-        self.dwell_time = self.llm_config.get('dwell_time', 60) 
-        self.num_retries = self.llm_config.get('num_retries', 3)
+        self.dwell_time = self.llm_config.get('dwell_time', 10) 
+        self.num_retries = self.llm_config.get('num_retries', 5)
 
         self.temp = self.llm_config.get('temperature', 1.0)
         

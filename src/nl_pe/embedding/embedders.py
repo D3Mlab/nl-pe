@@ -244,7 +244,6 @@ class BaseEmbedder(ABC):
         #torch.cuda.empty_cache()
 
     def exact_knn_from_faiss(self, state) -> list[str]:
-        start_time = time.time()
         query = state.get("query")
 
         query_emb = self.embed_documents_batch([query], prompt=self.embedding_config.get("query_prompt", ''))[0]
@@ -257,6 +256,7 @@ class BaseEmbedder(ABC):
         query_emb_np = query_emb.detach().cpu().numpy().reshape(1, -1)
         self.logger.debug(f"query_emb_np created from query_emb.cpu().numpy(), shape: {query_emb_np.shape}")
 
+        start_time = time.time()
         distances, indices = index.search(query_emb_np, self.k)
         self.logger.debug(f"FAISS search completed, found {len(indices[0])} results")
         state['top_k_psgs'] = [doc_ids[i] for i in indices[0]]
@@ -264,9 +264,7 @@ class BaseEmbedder(ABC):
         state['knn_scores'] = distances[0].tolist()
         state['knn_time'] = time.time() - start_time
 
-
     def exact_knn_from_faiss_gpu(self, state) -> list[str]:
-        start_time = time.time()
         query = state.get("query")
 
         # 1) Embed query (likely on inference_device), then move to tensor ops device
@@ -296,6 +294,7 @@ class BaseEmbedder(ABC):
         inc_scores = None  # torch tensor on CPU
         inc_indices = None  # torch tensor on CPU
 
+        start_time = time.time()
         with torch.no_grad():
             for start in range(0, n_total, batch_size):
                 end = min(start + batch_size, n_total)
@@ -334,6 +333,212 @@ class BaseEmbedder(ABC):
         state["top_k_psgs"] = [str(doc_ids[i]) for i in top_idx]
         state["init_knn_pid_list"] = copy.deepcopy(state["top_k_psgs"])
         state["knn_scores"] = top_scores
+        state["knn_time"] = time.time() - start_time
+
+    def exact_knn_from_faiss_gpu_mmr(self, state) -> list[str]:
+        """
+        Dense exact KNN with greedy MMR diversification.
+        Mirrors GPActiveLearner.mmr_af logic but uses
+        query similarity as the base acquisition score.
+        """
+
+
+        query = state.get("query")
+
+        # ---------------------------------------------------
+        # 1) Embed query
+        # ---------------------------------------------------
+        query_emb = self.embed_documents_batch(
+            [query],
+            prompt=self.embedding_config.get("query_prompt", "")
+        )[0]
+        state["query_emb"] = query_emb
+
+        device = torch.device(self.tensor_ops_device)
+        q = query_emb.to(device, non_blocking=True).float()
+
+        # ---------------------------------------------------
+        # 2) Load embeddings from FAISS
+        # ---------------------------------------------------
+        doc_ids = pickle.load(open(self.embeddings_path + "_doc_ids.pkl", "rb"))
+        index = faiss.read_index(self.embeddings_path)
+        n_total = index.ntotal
+
+        xb = index.reconstruct_n(0, n_total)
+        d_embs_cpu = torch.from_numpy(xb).float().pin_memory()
+
+        batch_size = int(self.similarity_batch_size or n_total)
+        k = int(self.k)
+        mmr_lambda = float(self.config.get('active_learning', {}).get("mmr_lambda"))
+
+        # ---------------------------------------------------
+        # 3) Compute base dense similarities (AF term)
+        # ---------------------------------------------------
+        q_scores = torch.empty(n_total, dtype=torch.float32)
+
+        start_time = time.time()
+        with torch.no_grad():
+            for start in range(0, n_total, batch_size):
+                end = min(start + batch_size, n_total)
+                batch = d_embs_cpu[start:end].to(device, non_blocking=True)
+                sims = torch.matmul(batch, q)
+                q_scores[start:end] = sims.cpu()
+                del batch, sims
+
+        # ---------------------------------------------------
+        # 4) Greedy Exact MMR
+        # ---------------------------------------------------
+        selected = []
+        selected_scores = []
+
+        available_mask = torch.ones(n_total, dtype=torch.bool)
+        max_sim = torch.zeros(n_total, dtype=torch.float32)
+
+        num_to_select = min(k, n_total)
+
+        # ---- FIRST PICK: pure query similarity ----
+        masked_af = q_scores.masked_fill(~available_mask, float("-inf"))
+        next_idx = int(torch.argmax(masked_af).item())
+
+        selected.append(next_idx)
+        selected_scores.append(float(q_scores[next_idx]))
+        available_mask[next_idx] = False
+
+        # ---- Remaining picks ----
+        for _ in range(num_to_select - 1):
+
+            picked_vec = d_embs_cpu[next_idx:next_idx + 1].to(device)
+
+            with torch.no_grad():
+                for start in range(0, n_total, batch_size):
+                    end = min(start + batch_size, n_total)
+
+                    chunk = d_embs_cpu[start:end].to(device)
+                    sims = torch.matmul(chunk, picked_vec.T).squeeze(1)
+
+                    max_sim[start:end] = torch.maximum(
+                        max_sim[start:end],
+                        sims.cpu()
+                    )
+
+                    del chunk, sims
+
+
+            # MMR score
+            mmr_scores = mmr_lambda * q_scores - (1 - mmr_lambda) * max_sim
+            mmr_scores[~available_mask] = float("-inf")
+
+            next_idx = int(torch.argmax(mmr_scores).item())
+
+            selected.append(next_idx)
+            selected_scores.append(float(mmr_scores[next_idx]))
+            available_mask[next_idx] = False
+
+        # ---------------------------------------------------
+        # 5) Finalize state
+        # ---------------------------------------------------
+        state["top_k_psgs"] = [str(doc_ids[i]) for i in selected]
+        state["init_knn_pid_list"] = copy.deepcopy(state["top_k_psgs"])
+        state["knn_scores"] = selected_scores
+        state["knn_time"] = time.time() - start_time
+
+    def exact_knn_from_faiss_cpu_mmr(self, state) -> list[str]:
+        """
+        CPU FAISS-based exact greedy MMR.
+
+        - Uses FAISS IndexFlatIP for all similarity computations.
+        - Treats each newly selected document as a query.
+        - Does one full FAISS pass per selected document.
+        - No reconstruct_n, no GPU.
+        """
+
+
+        query = state.get("query")
+
+        # ---------------------------------------------------
+        # 1) Embed query (CPU)
+        # ---------------------------------------------------
+        query_emb = self.embed_documents_batch(
+            [query],
+            prompt=self.embedding_config.get("query_prompt", "")
+        )[0]
+
+        state["query_emb"] = query_emb
+
+        q_np = query_emb.detach().cpu().numpy().reshape(1, -1)
+
+        # ---------------------------------------------------
+        # 2) Load FAISS index + doc_ids
+        # ---------------------------------------------------
+        doc_ids = pickle.load(open(self.embeddings_path + "_doc_ids.pkl", "rb"))
+        index = faiss.read_index(self.embeddings_path)
+
+        n_total = index.ntotal
+        k = int(self.k)
+        mmr_lambda = float(
+            self.config.get("active_learning", {}).get("mmr_lambda")
+        )
+        
+        start_time = time.time()
+        # ---------------------------------------------------
+        # 3) Base query similarity (1 full FAISS pass)
+        # ---------------------------------------------------
+        q_scores_np, _ = index.search(q_np, n_total)
+        q_scores = q_scores_np.flatten()  # shape (N,)
+
+        # ---------------------------------------------------
+        # 4) Greedy Exact MMR (CPU)
+        # ---------------------------------------------------
+        selected = []
+        selected_scores = []
+
+        available_mask = np.ones(n_total, dtype=bool)
+
+        # IMPORTANT: allow negative similarities if normalized
+        max_sim = np.full(n_total, -1e9, dtype=np.float32)
+
+        num_to_select = min(k, n_total)
+
+        # ---- FIRST PICK (pure dense similarity) ----
+        masked_scores = np.where(available_mask, q_scores, -np.inf)
+        next_idx = int(np.argmax(masked_scores))
+
+        selected.append(next_idx)
+        selected_scores.append(float(q_scores[next_idx]))
+        available_mask[next_idx] = False
+
+        # ---------------------------------------------------
+        # 5) Remaining picks (one FAISS pass per doc)
+        # ---------------------------------------------------
+        for _ in range(num_to_select - 1):
+
+            # Treat selected document as query
+            # We retrieve its embedding via reconstruct
+            picked_vec = index.reconstruct(next_idx).reshape(1, -1)
+
+            # One full FAISS pass
+            sims_np, _ = index.search(picked_vec, n_total)
+            sims = sims_np.flatten()
+
+            # Update running max similarity
+            max_sim = np.maximum(max_sim, sims)
+
+            # MMR score
+            mmr_scores = mmr_lambda * q_scores - (1 - mmr_lambda) * max_sim
+            mmr_scores[~available_mask] = -np.inf
+
+            next_idx = int(np.argmax(mmr_scores))
+
+            selected.append(next_idx)
+            selected_scores.append(float(mmr_scores[next_idx]))
+            available_mask[next_idx] = False
+
+        # ---------------------------------------------------
+        # 6) Finalize state
+        # ---------------------------------------------------
+        state["top_k_psgs"] = [str(doc_ids[i]) for i in selected]
+        state["init_knn_pid_list"] = copy.deepcopy(state["top_k_psgs"])
+        state["knn_scores"] = selected_scores
         state["knn_time"] = time.time() - start_time
 
     def exact_knn_from_db(self, state) -> list[str]:
