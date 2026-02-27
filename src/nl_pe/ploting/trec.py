@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
+from matplotlib.lines import Line2D
 
 
 def _normalize_metric_name(metric):
@@ -108,8 +109,26 @@ def _plot_trec_baseline_markers(ax, metric, k, baseline_points):
             zorder=10,
         )
 
+
+def _get_trec_baseline_legend_handles(baseline_points):
+    handles = []
+    for method_name, baseline in baseline_points.items():
+        handles.append(
+            Line2D(
+                [0],
+                [0],
+                marker="x",
+                color="black",
+                linestyle="None",
+                alpha=baseline["alpha"],
+                markersize=8,
+                label=method_name,
+            )
+        )
+    return handles
+
 def plot_trec_metrics_vs_k(step_size, k, metrics, method_paths, method_names,
-                 line_styles=None, y_mins=None, y_maxs=None, title=None, dataset = '', baselines=None):
+                 line_styles=None, y_mins=None, y_maxs=None, title=None, dataset = '', baselines=None, legend_coords=None):
     if k % step_size != 0:
         print('k must be divisible by step size')
         return
@@ -156,7 +175,18 @@ def plot_trec_metrics_vs_k(step_size, k, metrics, method_paths, method_names,
         ax.grid(True)
         
         if i == 0:
-            ax.legend()
+            handles, labels = ax.get_legend_handles_labels()
+            baseline_handles = _get_trec_baseline_legend_handles(baseline_points)
+            legend_kwargs = {}
+            if legend_coords is not None:
+                legend_kwargs["bbox_to_anchor"] = legend_coords
+                legend_kwargs["loc"] = "upper left"
+
+            ax.legend(
+                handles + baseline_handles,
+                labels + [h.get_label() for h in baseline_handles],
+                **legend_kwargs,
+            )
 
     plt.suptitle(title, fontsize=16)
     plt.tight_layout(rect=[0, 0, 1, 0.95])
@@ -218,5 +248,7 @@ def get_runtimes(method_path):
 
     runtimes = np.array(runtimes)
     return runtimes
+
+
 
 
