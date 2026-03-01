@@ -264,6 +264,65 @@ class BaseEmbedder(ABC):
         state['knn_scores'] = distances[0].tolist()
         state['knn_time'] = time.time() - start_time
 
+    def exact_q_dec_knn(self, state) -> list[str]:
+        """
+        Exact KNN over original query + reformulations, averaging similarity
+        scores across all queries for each document.
+
+        For each query (original + reformulations), retrieves top-k docs from
+        FAISS. Then merges k*L candidates (with overlap) and assigns each doc
+        an average similarity over the L queries (missing => 0).
+        """
+        start_time = time.time()
+
+        query = state.get("query")
+        reform_texts = state.get("query_reformulations", []) or []
+
+        all_queries = [query] + list(reform_texts)
+
+        # Embed all queries in a single batch
+        query_embs = self.embed_documents_batch(
+            all_queries,
+            prompt=self.embedding_config.get("query_prompt", ""),
+            batch_size=self.embedding_config.get("inference_batch_size", len(all_queries)),
+        )
+
+        if query_embs.dim() == 1:
+            query_embs = query_embs.unsqueeze(0)
+
+        # store original query embedding for downstream components
+        state["query_emb"] = query_embs[0]
+
+        # Load doc_ids + FAISS index
+        doc_ids = pickle.load(open(self.embeddings_path + "_doc_ids.pkl", "rb"))
+        index = faiss.read_index(self.embeddings_path)
+
+        query_embs_np = query_embs.detach().cpu().numpy()
+        self.logger.debug(
+            f"Running q-dec KNN for {query_embs_np.shape[0]} queries with k={self.k}"
+        )
+
+        distances, indices = index.search(query_embs_np, self.k)
+
+        # Aggregate scores per doc across L queries (missing => 0)
+        num_queries = query_embs_np.shape[0]
+        score_sums = {}
+        for qi in range(num_queries):
+            for rank, idx in enumerate(indices[qi]):
+                doc_id = str(doc_ids[idx])
+                score_sums[doc_id] = score_sums.get(doc_id, 0.0) + float(distances[qi][rank])
+
+        avg_scores = {doc_id: total / num_queries for doc_id, total in score_sums.items()}
+
+        sorted_docs = sorted(avg_scores.items(), key=lambda x: x[1], reverse=True)
+        k_final = min(self.k, len(sorted_docs))
+        top_k = sorted_docs[:k_final]
+
+        state['top_k_psgs'] = [doc_id for doc_id, _ in top_k]
+        state['init_knn_pid_list'] = copy.deepcopy(state['top_k_psgs'])
+        state['knn_scores'] = [score for _, score in top_k]
+        state['knn_time'] = time.time() - start_time
+
     def exact_knn_from_faiss_gpu(self, state) -> list[str]:
         query = state.get("query")
 
