@@ -42,7 +42,7 @@ llm:
   model_class: OpenAILLM
   model_name: gpt-5
   temperature: 1
-  num_retries: 15
+  num_retries: 40
 templates:
   template_dir: prompt_templates
 
