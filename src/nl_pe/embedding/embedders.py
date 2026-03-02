@@ -276,7 +276,7 @@ class BaseEmbedder(ABC):
         start_time = time.time()
 
         query = state.get("query")
-        reform_texts = state.get("query_reformulations", []) or []
+        reform_texts = state.get("query_reformulations")
 
         all_queries = [query] + list(reform_texts)
 
