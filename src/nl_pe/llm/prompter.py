@@ -141,12 +141,12 @@ class Prompter(TextScorer):
         llm_response = self.llm.prompt(prompt)
         self.logger.debug("Raw LLM response:\n%s", llm_response)
 
-        parsed_list = self.parse_list_from_JSON(llm_response, len(doc_ids))
+        parsed_list = self._parse_list_from_JSON(llm_response, len(doc_ids))
         self.logger.debug(f"Parsed list: {parsed_list}")
         #int_scores = self._parse_scores_from_JSON(llm_response, len(doc_ids))
         #self.logger.debug(f"Parsed scores: {int_scores}")
 
-
+        #return reranked_list
 
     def prompt_from_temp(self,template_path, prompt_dict = {}):
         prompt = self.render_prompt(prompt_dict, template_path)
@@ -218,6 +218,118 @@ class Prompter(TextScorer):
 
         return scores
 
+    def _parse_list_from_JSON(self, llm_response, expected_passage_ids):
+        """
+        Parse a listwise reranking from llm_response["JSON_dict"].
+
+        Expected JSON structure:
+            {"reranked_passage_ids": ["pid1", ..., "pidK"]}
+        But "reranked_passage_ids" may also be:
+            - a single string like "pid1, pid2, ..., pidK"
+            - a list containing one string like ["pid1, pid2, ..., pidK"]
+            - a string with brackets/quotes like "['pid1','pid2',...]" or '["pid1","pid2",...]'
+
+        Behavior:
+        - If fewer than K ids are returned, log a warning and pad missing ids at the end
+            in their original relative order (from expected_passage_ids).
+        - If extra/unknown ids appear, log a warning and ignore unknowns.
+        - Always returns a list of length K (after padding), unless expected_passage_ids is empty.
+        """
+        K = len(expected_passage_ids)
+        if K == 0:
+            return []
+
+        json_dict = llm_response.get("JSON_dict")
+        if json_dict is None or not isinstance(json_dict, dict):
+            raise ValueError("LLM response did not contain a valid JSON_dict dict.")
+
+        if "reranked_passage_ids" not in json_dict:
+            raise ValueError("JSON response missing 'reranked_passage_ids' key.")
+
+        raw = json_dict["reranked_passage_ids"]
+
+        def _splitish(s: str):
+            # Remove wrapping whitespace and common wrappers
+            s = s.strip()
+            # Strip a single pair of outer brackets/parentheses if present
+            if (s.startswith("[") and s.endswith("]")) or (s.startswith("(") and s.endswith(")")):
+                s = s[1:-1].strip()
+
+            # Remove quotes around whole string if present
+            if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+                s = s[1:-1].strip()
+
+            # Now split on commas primarily; fall back to whitespace if no commas.
+            parts = [p.strip() for p in s.split(",")] if "," in s else s.split()
+            # Strip quotes around each token
+            cleaned = []
+            for p in parts:
+                p = p.strip()
+                if not p:
+                    continue
+                if (p.startswith('"') and p.endswith('"')) or (p.startswith("'") and p.endswith("'")):
+                    p = p[1:-1].strip()
+                if p:
+                    cleaned.append(p)
+            return cleaned
+
+        # Normalize to a list of candidate ids (strings)
+        candidates = []
+        if isinstance(raw, list):
+            # e.g. ["pid1","pid2"] OR ["pid1, pid2, pid3"]
+            for item in raw:
+                if item is None:
+                    continue
+                if isinstance(item, str):
+                    # If item looks like it contains multiple ids, split it.
+                    if "," in item or item.strip().startswith("[") or item.strip().startswith("("):
+                        candidates.extend(_splitish(item))
+                    else:
+                        candidates.append(item.strip().strip('"').strip("'"))
+                else:
+                    # Non-string list entries: coerce to str cautiously
+                    candidates.append(str(item).strip())
+        elif isinstance(raw, str):
+            candidates = _splitish(raw)
+        else:
+            raise ValueError(f"'reranked_passage_ids' must be list or string, got {type(raw)}")
+
+        expected_set = set(expected_passage_ids)
+
+        # Filter to expected ids, de-dup, preserve order
+        seen = set()
+        reranked = []
+        unknown = []
+        for pid in candidates:
+            if pid in expected_set:
+                if pid not in seen:
+                    seen.add(pid)
+                    reranked.append(pid)
+            else:
+                unknown.append(pid)
+
+        if unknown:
+            self.logger.warning(
+                "LW JSON contained unknown passage ids (ignored): %s", unknown
+            )
+
+        # Pad missing ids at end in original relative order
+        missing = [pid for pid in expected_passage_ids if pid not in seen]
+        if missing:
+            self.logger.warning(
+                "LW JSON returned %d/%d passage ids; padding %d missing ids at end.",
+                len(reranked), K, len(missing)
+            )
+            reranked.extend(missing)
+
+        # If model returned more than K valid ids (shouldn't happen after de-dup, but just in case)
+        if len(reranked) > K:
+            self.logger.warning(
+                "LW JSON returned more than %d ids after normalization; truncating extras.", K
+            )
+            reranked = reranked[:K]
+
+        return reranked
 
 if __name__ == "__main__":
     #temporary testing for prompter
