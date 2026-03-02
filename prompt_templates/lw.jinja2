@@ -1,0 +1,39 @@
+Return the best ordering of the passages given the query. In JSON form, output a list of passage ID strings with a list length of exactly k ids.
+
+<Example>
+<Example Query>
+<example query text>
+</Example Query>
+
+<Example Passages>
+  p1: <1st passage>
+  p2: <2nd passage>
+  p3: <3rd passage>
+</Example Passages>
+
+<Example k>
+3
+</Example k>
+
+<Example Output JSON>
+{"reranked_passage_ids": ["<most relevant pid>","<2nd-most relevant pid>","<3rd-most relevant pid>"]}
+</Example Output>
+</Example Output JSON>
+
+<Query>
+{{query}}
+</Query>
+
+<Passages>
+{% for pid in local_p_ids %}
+  {{ pid }}: {{ p_texts[loop.index0] }}
+{% endfor %}
+</Passages>
+
+<k>
+{{list_len}}
+</k>
+
+<Output JSON>
+
+
