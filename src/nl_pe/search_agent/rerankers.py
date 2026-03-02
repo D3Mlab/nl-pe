@@ -2,8 +2,7 @@ from nl_pe.utils.setup_logging import setup_logging
 import os
 import time
 
-class TopKPWReranker():
-
+class TextReranker():
     def __init__(self, config, scorer):
 
         self.config = config
@@ -13,13 +12,16 @@ class TopKPWReranker():
         self.scorer = scorer
         self.score = scorer.score
 
-        #batch size
-        self.k_acq = int(self.config.get('active_learning', {}).get("k_acq", 1))
+        #batch/sw size
+        self.k_acq = int(self.config.get('active_learning', {}).get("k_acq"))
 
         # max number of docs to score (like AL budget)
         self.n_obs_iterations = int(
             self.config.get('active_learning', {}).get('n_obs_iterations', 0)
         )
+
+
+class TopKPWReranker(TextReranker):
 
     def rerank(self, state):
         #open scorer cache
@@ -71,3 +73,21 @@ class TopKPWReranker():
 
         # write scorer cache
         self.scorer.write_cache()
+
+
+
+
+class LWReranker(TextReranker):
+
+    def rerank(self, state):
+        #open scorer cache
+        prompt_name = self.config.get('templates', {}).get('lw_prompt', '')
+        qid = state['qid']
+        self.scorer.open_cache(qid,prompt_name=prompt_name)
+
+        #TODO: tail prepend dense order
+
+        #implement a sliding window reranker. Sliding window size is self.k_acq, and the overlap is always half the windwow (round if needed)
+
+        #start at the bottom, and get those k_acq doc_ids, and pass them to scorer.lw_rerank(state, batch_doc_ids)
+        #

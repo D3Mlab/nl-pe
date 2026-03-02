@@ -25,7 +25,10 @@ class Prompter(TextScorer):
         self.jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader(searchpath=self.template_dir))
 
         self.pw_prompt_path = None
+        self.lw_prompt_path = None
 
+        if self.template_config.get('lw_prompt'):
+            self.lw_prompt_path = f"{self.template_config.get('lw_prompt')}.jinja2"
         if self.template_config.get('pw_prompt'):
             self.pw_prompt_path = f"{self.template_config.get('pw_prompt')}.jinja2"
 
@@ -36,7 +39,6 @@ class Prompter(TextScorer):
     def score(self, state, doc_ids):
         state.setdefault("observation_times", [])
         #add scoring prompt to cache name if it doesn't end with it
-        
         self.logger.debug(f"PW LLM Scoring doc_ids: {doc_ids}")
         #track how often cache is used
         cache_use_counter = state.setdefault("cache_use_counter", {})
@@ -62,9 +64,9 @@ class Prompter(TextScorer):
             self.logger.debug("PW cache hit for doc_ids key: %s", cache_key)
             return cached_scores
 
+        # if not cache:
         cache_use_counter["not_used"] += 1
 
-        # if not cache:
         query_text = state.get("query")
         d_texts = self.did_to_text(state, doc_ids)
         local_p_ids = [f"p{i+1}" for i in range(len(doc_ids))]
@@ -106,88 +108,45 @@ class Prompter(TextScorer):
         state['prompt_tokens'].append(llm_response.get('prompt_tokens', None))
 
         return scores
-
-    def pw_rerank(self, state):
-
-
-        if state["current_batch"] == None:
-            return
-
-        instance = state['instance']
     
-        query = instance["query"]["text"]
+    def lw_rerank(self, state, doc_ids):
+        #doc_ids are the ids in a window. need to return a re-ordering
+        state.setdefault("observation_times", [])
+        self.logger.debug(f"LW LLM Reranking doc_ids: {doc_ids}")
+        #track how often cache is used
+        cache_use_counter = state.setdefault("cache_use_counter", {})
+        cache_use_counter.setdefault("used", 0)
+        cache_use_counter.setdefault("not_used", 0)
+        
+        #TODO: cache check:
 
-        psg_list_batch = state["current_batch"]
+        cache_use_counter["not_used"] += 1
 
-        # Get local passages for the batch using simple pIDs (e.g. 'p1' instead of '1k43hj2f53l345')
-        #local_psgs = {<local_p_id>: {p_id: __, text: __},...}
-        local_psgs = self.get_local_psgs(psg_list_batch)
-
-        #get label descriptions (e.g. "3 is highly relevant...", etc)
-        label_macro_name = self.config['templates'].get('label_macro_name')
-        n_labels = self.config['templates'].get('n_labels')
-        list_len = len(local_psgs)
+        query_text = state.get("query")
+        d_texts = self.did_to_text(state, doc_ids)
+        local_p_ids = [f"p{i+1}" for i in range(len(doc_ids))]
 
         prompt_dict = {
-            'query' : query,
-            'local_p_ids' : list(local_psgs.keys()),
-            'p_texts' : [psg["text"] for psg in psg_list_batch],
-            'label_macro_name': label_macro_name,
-            'n_labels': n_labels,
-            'list_len': list_len
+            'query' : query_text,
+            "local_p_ids": local_p_ids,
+            "p_texts": d_texts,
+            "list_len": len(doc_ids),
         }
 
-        template_path = self.template_config["pw_rerank"]
-        prompt = self.render_prompt(prompt_dict, template_path)
+        prompt = self.render_prompt(prompt_dict, self.lw_prompt_path)
+
+        self.logger.debug(f"Using template: {self.lw_prompt_path}")
+        self.logger.debug("Rendered prompt:\n%s", prompt)
 
         llm_response = self.llm.prompt(prompt)
-        llm_output = llm_response["message"]
-        self.add_response_to_state(state,llm_output)
-        self.add_prompt_tokens_to_state(state,llm_response)
+        self.logger.debug("Raw LLM response:\n%s", llm_response)
 
-        scores = self.parse_llm_list_pw(llm_output)
-        scores = [int(score) for score in scores]
+        parsed_list = self.parse_list_from_JSON(llm_response, len(doc_ids))
+        self.logger.debug(f"Parsed list: {parsed_list}")
+        #int_scores = self._parse_scores_from_JSON(llm_response, len(doc_ids))
+        #self.logger.debug(f"Parsed scores: {int_scores}")
 
-        if 'batch_scores' not in state:
-            state['batch_scores'] = []
-        state['batch_scores'].append(scores)
 
-        self.logger.debug(f"pw_rerank scores: {scores}")
-
-        # Ensure pid_to_score_dict exists in state
-        if "pid_to_score_dict" not in state:
-            state["pid_to_score_dict"] = {}
-
-        for pid in [psg["pid"] for psg in psg_list_batch]:
-            if pid not in state["pid_to_score_dict"]:
-                state["pid_to_score_dict"][pid] = []    
-
-        # Extend the scores for the pids in the batch
-        for pid, score in zip([psg["pid"] for psg in psg_list_batch], scores):
-            state["pid_to_score_dict"][pid].append(score)
-
-        duration = llm_response["prompt_time"]
-        self.logger.debug(f"pw_rerank duration: {duration}")
-
-        if 'prompting_runtimes' not in state:
-            state['prompting_runtimes'] = []
-        state['prompting_runtimes'].append(duration)
-
-    def add_prompt_to_state(self,state,prompt):
-        if "prompts" not in state:
-            state["prompts"] = []  
-        state["prompts"].append(prompt)
-
-    def add_response_to_state(self,state,response):
-        if "responses" not in state:
-            state["responses"] = []  
-        state["responses"].append(response)
-
-    def add_prompt_tokens_to_state(self,state,llm_response):
-        if llm_response.get('prompt_tokens'):
-            if "prompt_tokens" not in state:
-                state["prompt_tokens"] = []  
-            state["prompt_tokens"].append(llm_response['prompt_tokens'])
 
     def prompt_from_temp(self,template_path, prompt_dict = {}):
         prompt = self.render_prompt(prompt_dict, template_path)
@@ -259,7 +218,6 @@ class Prompter(TextScorer):
 
         return scores
 
-  
 
 if __name__ == "__main__":
     #temporary testing for prompter
