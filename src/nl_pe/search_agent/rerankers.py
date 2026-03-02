@@ -85,16 +85,46 @@ class LWReranker(TextReranker):
         qid = state['qid']
         self.scorer.open_cache(qid,prompt_name=prompt_name)
 
-        #TODO: tail prepend dense order
+        original = [str(d) for d in state['top_k_psgs']]
 
-        #implement a sliding window reranker. Sliding window size is self.k_acq, and the overlap is always half the windwow (round if needed)
+        # Respect observation budget (rerank only the observed prefix)
+        if self.n_obs_iterations and self.n_obs_iterations > 0:
+            observed = original[:self.n_obs_iterations]
+            tail = original[self.n_obs_iterations:]
+        #rerank everything
+        else:
+            observed = original
+            tail = []
 
-        #start at the bottom, and get those k_acq doc_ids, and pass them to scorer.lw_rerank(state, batch_doc_ids)
-        
-        #upon recieving back the reordered scores, update the relevant bottom part of the list, ie top_k_psgs in state
-        #and slide the window up by half its size. repeat until hit top
+        n = len(observed)
 
-        #extend the list past n_observations with the original dense ranking 
+        # sliding window params
+        win = min(self.k_acq, n)
+        overlap = win // 2 #div and round down to nearest integer
+        step = max(1, win - overlap)  # == ceil(win/2)
+
+        # make sure these exist for time/token accounting downstream
+        state.setdefault("observation_times", [])
+        state.setdefault("prompt_tokens", [])
+
+        # Start at the bottom window and slide upward by half-window
+        start = max(0, n - win)
+        while True:
+            end = min(start + win, n)
+            window_pids = observed[start:end]
+
+            # listwise reorder this window (returns pids in new order)
+            reranked_window = self.scorer.lw_rerank(state, window_pids)
+
+            # splice back
+            observed[start:end] = reranked_window
+
+            if start == 0:
+                break
+            start = max(0, start - step)
+
+        # Update state: reranked observed prefix + untouched dense tail
+        state['top_k_psgs'] = observed + tail
 
         # write scorer cache
         self.scorer.write_cache()
