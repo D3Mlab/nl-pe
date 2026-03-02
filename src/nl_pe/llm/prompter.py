@@ -118,7 +118,28 @@ class Prompter(TextScorer):
         cache_use_counter.setdefault("used", 0)
         cache_use_counter.setdefault("not_used", 0)
         
-        #TODO: cache check:
+        # exact-match cache key from full doc_ids sequence
+        cache_key = "-".join([str(did) for did in doc_ids])
+
+        # check cache (exact match only)
+        if cache_key in self.cache:
+            entry = self.cache[cache_key]
+            cached_list = entry.get("reranked_list", None)
+            cached_time = float(entry.get("time", 0.0))
+            cached_prompt_tokens = entry.get("prompt_tokens", None)
+
+            if cached_list is not None:
+                state["observation_times"] += [cached_time]
+                if "prompt_tokens" not in state:
+                    state["prompt_tokens"] = []
+                state["prompt_tokens"].append(cached_prompt_tokens)
+
+                cache_use_counter["used"] += 1
+                self.logger.debug("LW cache hit for doc_ids key: %s", cache_key)
+                return cached_list
+            else:
+                # Defensive: cache entry exists but doesn't have expected field
+                self.logger.warning("LW cache entry missing 'reranked_list' for key: %s", cache_key)
 
         cache_use_counter["not_used"] += 1
 
@@ -141,12 +162,35 @@ class Prompter(TextScorer):
         llm_response = self.llm.prompt(prompt)
         self.logger.debug("Raw LLM response:\n%s", llm_response)
 
-        parsed_list = self._parse_list_from_JSON(llm_response, len(doc_ids))
-        self.logger.debug(f"Parsed list: {parsed_list}")
-        #int_scores = self._parse_scores_from_JSON(llm_response, len(doc_ids))
-        #self.logger.debug(f"Parsed scores: {int_scores}")
+        #parsed, deduplicated, hallucinations removed, extended w original order if too short
+        reranked_loc_pids  = self._parse_list_from_JSON(llm_response, local_p_ids)
+        self.logger.debug(f"Parsed list: {reranked_loc_pids}")
 
-        #return reranked_list
+        loc_pid_to_pid = {
+            loc_pid: pid for loc_pid, pid in zip(local_p_ids, doc_ids)
+        }
+
+        reranked_pids = [
+            loc_pid_to_pid[loc_pid] for loc_pid in reranked_loc_pids
+        ]
+
+        # write exact-match cache entry (store scaled scores)
+        self.cache[cache_key] = {
+            "reranked_list": reranked_pids,
+            "time": float(llm_response["prompt_time"]),
+            "prompt_tokens": llm_response.get("prompt_tokens", None),
+        }
+
+        state["observation_times"] += [llm_response["prompt_time"]]
+
+        if 'prompt_tokens' not in state:
+            state['prompt_tokens'] = []
+        state['prompt_tokens'].append(llm_response.get('prompt_tokens', None))
+
+        return reranked_pids
+
+
+
 
     def prompt_from_temp(self,template_path, prompt_dict = {}):
         prompt = self.render_prompt(prompt_dict, template_path)

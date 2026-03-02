@@ -90,4 +90,11 @@ class LWReranker(TextReranker):
         #implement a sliding window reranker. Sliding window size is self.k_acq, and the overlap is always half the windwow (round if needed)
 
         #start at the bottom, and get those k_acq doc_ids, and pass them to scorer.lw_rerank(state, batch_doc_ids)
-        #
+        
+        #upon recieving back the reordered scores, update the relevant bottom part of the list, ie top_k_psgs in state
+        #and slide the window up by half its size. repeat until hit top
+
+        #extend the list past n_observations with the original dense ranking 
+
+        # write scorer cache
+        self.scorer.write_cache()
