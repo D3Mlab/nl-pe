@@ -28,7 +28,7 @@ class BasePolicy(ABC):
             if not comp_class:
                 raise ValueError(f"Component class for {comp_name} not found.")
             #special case when we need to pass scorer which lives in experiment manager to avoid reopening corpus csvs for each query
-            if comp_name in ['GPActiveLearner','TopKPWReranker']:
+            if comp_name in ['GPActiveLearner','TopKPWReranker','LWReranker']:
                 self.curr_comp_inst = comp_class(config=self.config,scorer=self.scorer)
                 self.logger.debug(f'Component instance created: {self.curr_comp_inst}')
                 self.components[comp_name] = self.curr_comp_inst
