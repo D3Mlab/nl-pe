@@ -285,10 +285,12 @@ class Prompter(TextScorer):
 
         json_dict = llm_response.get("JSON_dict")
         if json_dict is None or not isinstance(json_dict, dict):
-            raise ValueError("LLM response did not contain a valid JSON_dict dict.")
+            self.logger.warning("LLM response did not contain a valid JSON_dict dict -- returning original ordering")
+            return expected_passage_ids
 
         if "reranked_passage_ids" not in json_dict:
-            raise ValueError("JSON response missing 'reranked_passage_ids' key.")
+            self.logger.warning("JSON response missing 'reranked_passage_ids' key -- returning original ordering")
+            return expected_passage_ids
 
         raw = json_dict["reranked_passage_ids"]
 
