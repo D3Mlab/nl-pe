@@ -264,6 +264,86 @@ class BaseEmbedder(ABC):
         state['knn_scores'] = distances[0].tolist()
         state['knn_time'] = time.time() - start_time
 
+    def _embed_query_and_reformulations(self, state):
+        query = state.get("query")
+        reform_texts = state.get("query_reformulations") or []
+        all_queries = [query] + list(reform_texts)
+
+        query_embs = self.embed_documents_batch(
+            all_queries,
+            prompt=self.embedding_config.get("query_prompt", ""),
+            batch_size=self.embedding_config.get("inference_batch_size", len(all_queries)),
+        )
+
+        if query_embs.dim() == 1:
+            query_embs = query_embs.unsqueeze(0)
+
+        state["query_emb"] = query_embs[0]
+        return all_queries, query_embs
+
+    def _mmr_select_gpu(
+        self,
+        q: Tensor,
+        d_embs_cpu: Tensor,
+        batch_size: int,
+        k: int,
+        mmr_lambda: float,
+        device: torch.device,
+    ):
+        n_total = d_embs_cpu.shape[0]
+
+        q_scores = torch.empty(n_total, dtype=torch.float32)
+        with torch.no_grad():
+            for start in range(0, n_total, batch_size):
+                end = min(start + batch_size, n_total)
+                batch = d_embs_cpu[start:end].to(device, non_blocking=True)
+                sims = torch.matmul(batch, q)
+                q_scores[start:end] = sims.cpu()
+                del batch, sims
+
+        selected = []
+        selected_scores = []
+
+        available_mask = torch.ones(n_total, dtype=torch.bool)
+        max_sim = torch.zeros(n_total, dtype=torch.float32)
+
+        num_to_select = min(k, n_total)
+
+        masked_af = q_scores.masked_fill(~available_mask, float("-inf"))
+        next_idx = int(torch.argmax(masked_af).item())
+
+        selected.append(next_idx)
+        selected_scores.append(float(q_scores[next_idx]))
+        available_mask[next_idx] = False
+
+        for _ in range(num_to_select - 1):
+            picked_vec = d_embs_cpu[next_idx:next_idx + 1].to(device)
+
+            with torch.no_grad():
+                for start in range(0, n_total, batch_size):
+                    end = min(start + batch_size, n_total)
+
+                    chunk = d_embs_cpu[start:end].to(device)
+                    sims = torch.matmul(chunk, picked_vec.T).squeeze(1)
+
+                    max_sim[start:end] = torch.maximum(
+                        max_sim[start:end],
+                        sims.cpu()
+                    )
+
+                    del chunk, sims
+
+            mmr_scores = mmr_lambda * q_scores - (1 - mmr_lambda) * max_sim
+            mmr_scores[~available_mask] = float("-inf")
+
+            next_idx = int(torch.argmax(mmr_scores).item())
+
+            selected.append(next_idx)
+            selected_scores.append(float(mmr_scores[next_idx]))
+            available_mask[next_idx] = False
+
+        return selected, selected_scores
+
     def exact_q_dec_knn(self, state) -> list[str]:
         """
         Exact KNN over original query + reformulations, averaging similarity
@@ -275,23 +355,7 @@ class BaseEmbedder(ABC):
         """
         start_time = time.time()
 
-        query = state.get("query")
-        reform_texts = state.get("query_reformulations")
-
-        all_queries = [query] + list(reform_texts)
-
-        # Embed all queries in a single batch
-        query_embs = self.embed_documents_batch(
-            all_queries,
-            prompt=self.embedding_config.get("query_prompt", ""),
-            batch_size=self.embedding_config.get("inference_batch_size", len(all_queries)),
-        )
-
-        if query_embs.dim() == 1:
-            query_embs = query_embs.unsqueeze(0)
-
-        # store original query embedding for downstream components
-        state["query_emb"] = query_embs[0]
+        _, query_embs = self._embed_query_and_reformulations(state)
 
         # Load doc_ids + FAISS index
         doc_ids = pickle.load(open(self.embeddings_path + "_doc_ids.pkl", "rb"))
@@ -404,9 +468,6 @@ class BaseEmbedder(ABC):
 
         query = state.get("query")
 
-        # ---------------------------------------------------
-        # 1) Embed query
-        # ---------------------------------------------------
         query_emb = self.embed_documents_batch(
             [query],
             prompt=self.embedding_config.get("query_prompt", "")
@@ -416,9 +477,6 @@ class BaseEmbedder(ABC):
         device = torch.device(self.tensor_ops_device)
         q = query_emb.to(device, non_blocking=True).float()
 
-        # ---------------------------------------------------
-        # 2) Load embeddings from FAISS
-        # ---------------------------------------------------
         doc_ids = pickle.load(open(self.embeddings_path + "_doc_ids.pkl", "rb"))
         index = faiss.read_index(self.embeddings_path)
         n_total = index.ntotal
@@ -430,68 +488,16 @@ class BaseEmbedder(ABC):
         k = int(self.k)
         mmr_lambda = float(self.config.get('active_learning', {}).get("mmr_lambda"))
 
-        # ---------------------------------------------------
-        # 3) Compute base dense similarities (AF term)
-        # ---------------------------------------------------
-        q_scores = torch.empty(n_total, dtype=torch.float32)
-
         start_time = time.time()
-        with torch.no_grad():
-            for start in range(0, n_total, batch_size):
-                end = min(start + batch_size, n_total)
-                batch = d_embs_cpu[start:end].to(device, non_blocking=True)
-                sims = torch.matmul(batch, q)
-                q_scores[start:end] = sims.cpu()
-                del batch, sims
 
-        # ---------------------------------------------------
-        # 4) Greedy Exact MMR
-        # ---------------------------------------------------
-        selected = []
-        selected_scores = []
-
-        available_mask = torch.ones(n_total, dtype=torch.bool)
-        max_sim = torch.zeros(n_total, dtype=torch.float32)
-
-        num_to_select = min(k, n_total)
-
-        # ---- FIRST PICK: pure query similarity ----
-        masked_af = q_scores.masked_fill(~available_mask, float("-inf"))
-        next_idx = int(torch.argmax(masked_af).item())
-
-        selected.append(next_idx)
-        selected_scores.append(float(q_scores[next_idx]))
-        available_mask[next_idx] = False
-
-        # ---- Remaining picks ----
-        for _ in range(num_to_select - 1):
-
-            picked_vec = d_embs_cpu[next_idx:next_idx + 1].to(device)
-
-            with torch.no_grad():
-                for start in range(0, n_total, batch_size):
-                    end = min(start + batch_size, n_total)
-
-                    chunk = d_embs_cpu[start:end].to(device)
-                    sims = torch.matmul(chunk, picked_vec.T).squeeze(1)
-
-                    max_sim[start:end] = torch.maximum(
-                        max_sim[start:end],
-                        sims.cpu()
-                    )
-
-                    del chunk, sims
-
-
-            # MMR score
-            mmr_scores = mmr_lambda * q_scores - (1 - mmr_lambda) * max_sim
-            mmr_scores[~available_mask] = float("-inf")
-
-            next_idx = int(torch.argmax(mmr_scores).item())
-
-            selected.append(next_idx)
-            selected_scores.append(float(mmr_scores[next_idx]))
-            available_mask[next_idx] = False
+        selected, selected_scores = self._mmr_select_gpu(
+            q=q,
+            d_embs_cpu=d_embs_cpu,
+            batch_size=batch_size,
+            k=k,
+            mmr_lambda=mmr_lambda,
+            device=device,
+        )
 
         # ---------------------------------------------------
         # 5) Finalize state
@@ -500,6 +506,61 @@ class BaseEmbedder(ABC):
         state["init_knn_pid_list"] = copy.deepcopy(state["top_k_psgs"])
         state["knn_scores"] = selected_scores
         state["knn_time"] = time.time() - start_time
+
+    def exact_q_dec_knn_from_faiss_gpu_mmr(self, state) -> list[str]:
+        """
+        Query decomposition + MMR on GPU.
+
+        For each query (original + reformulations), run GPU MMR to select top-k
+        diversified docs. Then merge across queries by averaging MMR scores per
+        doc (missing => 0) and return final top-k.
+        """
+        start_time = time.time()
+
+        _, query_embs = self._embed_query_and_reformulations(state)
+
+        doc_ids = pickle.load(open(self.embeddings_path + "_doc_ids.pkl", "rb"))
+        index = faiss.read_index(self.embeddings_path)
+        n_total = index.ntotal
+
+        xb = index.reconstruct_n(0, n_total)
+        d_embs_cpu = torch.from_numpy(xb).float().pin_memory()
+
+        batch_size = int(self.similarity_batch_size or n_total)
+        k = int(self.k)
+        mmr_lambda = float(self.config.get('active_learning', {}).get("mmr_lambda"))
+        device = torch.device(self.tensor_ops_device)
+
+        num_queries = query_embs.shape[0]
+        score_sums = {}
+
+        for qi in range(num_queries):
+            q = query_embs[qi].to(device, non_blocking=True).float()
+            selected, selected_scores = self._mmr_select_gpu(
+                q=q,
+                d_embs_cpu=d_embs_cpu,
+                batch_size=batch_size,
+                k=k,
+                mmr_lambda=mmr_lambda,
+                device=device,
+            )
+
+            for idx, score in zip(selected, selected_scores):
+                doc_id = str(doc_ids[idx])
+                score_sums[doc_id] = score_sums.get(doc_id, 0.0) + float(score)
+
+        avg_scores = {
+            doc_id: total / num_queries for doc_id, total in score_sums.items()
+        }
+
+        sorted_docs = sorted(avg_scores.items(), key=lambda x: x[1], reverse=True)
+        k_final = min(self.k, len(sorted_docs))
+        top_k = sorted_docs[:k_final]
+
+        state['top_k_psgs'] = [doc_id for doc_id, _ in top_k]
+        state['init_knn_pid_list'] = copy.deepcopy(state['top_k_psgs'])
+        state['knn_scores'] = [score for _, score in top_k]
+        state['knn_time'] = time.time() - start_time
 
     def exact_knn_from_faiss_cpu_mmr(self, state) -> list[str]:
         """
