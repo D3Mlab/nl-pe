@@ -537,7 +537,7 @@ class GPActiveLearner(BaseActiveLearner):
 
         if "outer_acquisition_times" not in state:
             state["outer_acquisition_times"] = []
-        state["outer_acquisition_times"].append(round(time.time() - outer_start))
+        state["outer_acquisition_times"].append(round(time.time() - outer_start),3)
 
         return selected, selected_scores
 
