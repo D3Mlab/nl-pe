@@ -11,6 +11,15 @@ from nl_pe.utils.utils import get_doc_text_list
 from nl_pe.utils.qrels import load_pytrec_eval_qrels
 from pathlib import Path
 
+VALID_DATASETS = {
+    "nfcorpus",
+    "robust04",
+    "scifact",
+    "trec-covid",
+    "trec-news",
+    "webis-touche2020",
+}
+
 
 class EvalManager:
     def __init__(self, eval_dir, skip_existing=False, do_times=False, skip_trec=False):
@@ -273,22 +282,18 @@ class EvalManager:
                     f"Results directory present but not in test_queries.csv: {qid}"
                 )
 
-
     def _extract_dataset_and_experiment_parts(self):
         """
-        From a path that contains .../ir/<dataset>/<exp parts...>,
-        return (<dataset>, [<exp parts...>]).
+        Find the first path part that matches one of the known datasets.
+        Everything after that is considered experiment path parts.
         """
-        if "ir" not in self.eval_path_parts:
-            return None, []
+        for i, part in enumerate(self.eval_path_parts):
+            if part in VALID_DATASETS:
+                dataset = part
+                exp_parts = self.eval_path_parts[i + 1 :]
+                return dataset, exp_parts
 
-        ir_idx = self.eval_path_parts.index("ir")
-        if ir_idx + 1 >= len(self.eval_path_parts):
-            return None, []
-
-        dataset = self.eval_path_parts[ir_idx + 1]
-        exp_parts = self.eval_path_parts[ir_idx + 2:]
-        return dataset, exp_parts
+        return None, []
 
     def configure_optional_evals(self):
         """
