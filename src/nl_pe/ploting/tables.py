@@ -299,6 +299,137 @@ def make_two_metric_time_tables(
 
     return mean_table + "\n\n\n" + std_table
 
+
+def make_time_component_tables_per_dataset(
+    *,
+    datasets: List[str],
+    dataset_names: List[str],
+    baseline_rows: List[str],
+    method_rows: List[str],
+    caption: str = "Timing Component Breakdown",
+    label: str = "tab:timing-components",
+    table_env: str = "table*",
+    size_cmd: str = r"\small",
+    ignore_IO: bool = False,
+    dec_pts: int = 1,
+    trials_root: str = os.path.join("trials", "ir"),
+) -> str:
+    """
+    Build one LaTeX table per dataset from times.csv files.
+
+    Rows:
+      - baseline_rows then method_rows
+      - each row spec can be:
+            1) preformatted latex row string
+            2) (display_name, relative_method_path)
+
+    Columns (each with mean/std):
+      q-reform  <- q_gen
+      knn       <- knn
+      LLM Judge <- llm_obs
+      GP        <- gp_inf (or gp_inf_no_IO when ignore_IO=True)
+      MMR       <- mmr
+    """
+    if len(datasets) != len(dataset_names):
+        raise ValueError("datasets and dataset_names must have the same length")
+
+    gp_col = "gp_inf_no_IO" if ignore_IO else "gp_inf"
+    component_defs = [
+        ("q-reform", "q_gen"),
+        ("knn", "knn"),
+        ("LLM Judge", "llm_obs"),
+        ("GP", gp_col),
+        ("MMR", "mmr"),
+    ]
+
+    def build_rows_for_dataset(row_specs, dataset):
+        rows = []
+
+        for row_spec in row_specs:
+            if isinstance(row_spec, str):
+                rows.append(row_spec)
+                continue
+
+            if not (isinstance(row_spec, (list, tuple)) and len(row_spec) == 2):
+                raise ValueError(
+                    "Each row spec must be either a preformatted string or "
+                    "(display_name, relative_method_path)."
+                )
+
+            method_name, rel_path = row_spec
+            exp_dir = os.path.join(trials_root, dataset, str(rel_path))
+            df = _load_times_df(exp_dir)
+
+            row_cells = [str(method_name)]
+            for _, src_col in component_defs:
+                mean_val = _time_stat_from_df(df, src_col, stat="mean")
+                std_val = _time_stat_from_df(df, src_col, stat="std")
+                row_cells.extend([
+                    _format_table_number(mean_val, dec_pts=dec_pts),
+                    _format_table_number(std_val, dec_pts=dec_pts),
+                ])
+
+            rows.append(" & ".join(row_cells))
+
+        return rows
+
+    all_tables = []
+
+    for dataset, dataset_name in zip(datasets, dataset_names):
+        ds_baselines = build_rows_for_dataset(baseline_rows, dataset)
+        ds_methods = build_rows_for_dataset(method_rows, dataset)
+
+        lines = []
+        ds_label_suffix = dataset.replace("-", "_")
+
+        lines.extend([
+            rf"\begin{{{table_env}}}[t]",
+            size_cmd,
+            r"\centering",
+            rf"\caption{{{caption} ({dataset_name})}}",
+            rf"\label{{{label}_{ds_label_suffix}}}",
+        ])
+
+        col_spec = "l" + "cc" * len(component_defs)
+        lines.append(rf"\begin{{tabular}}{{{col_spec}}}")
+        lines.append(r"\toprule")
+
+        top_row = [r"\multirow{2}{*}{Method}"]
+        for display_name, _ in component_defs:
+            top_row.append(rf"\multicolumn{{2}}{{c}}{{{display_name}}}")
+        lines.append(" & ".join(top_row) + r" \\")
+
+        cmidrules = []
+        start_col = 2
+        for i in range(len(component_defs)):
+            left = start_col + i * 2
+            right = left + 1
+            cmidrules.append(rf"\cmidrule(lr){{{left}-{right}}}")
+        lines.append(" ".join(cmidrules))
+
+        second_row = ["", *[x for _ in component_defs for x in ("mean", "std")]]
+        lines.append(" & ".join(second_row) + r" \\")
+        lines.append(r"\midrule")
+
+        for row in ds_baselines:
+            lines.append(row + r" \\")
+
+        if ds_baselines and ds_methods:
+            lines.append(r"\midrule")
+
+        for row in ds_methods:
+            lines.append(row + r" \\")
+
+        lines.extend([
+            r"\bottomrule",
+            r"\end{tabular}",
+            rf"\end{{{table_env}}}",
+        ])
+
+        all_tables.append("\n".join(lines))
+
+    return "\n\n\n".join(all_tables)
+
 def build_baseline_rows(
     df,
     baseline_names,
