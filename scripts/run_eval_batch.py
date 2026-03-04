@@ -4,7 +4,8 @@ import subprocess
 import sys
 from dotenv import load_dotenv
 
-def run_eval_batch(e, skip_existing):
+
+def run_eval_batch(e, skip_existing, times=False, skip_trec=False):
     # Load environment variables
     load_dotenv()
 
@@ -20,12 +21,28 @@ def run_eval_batch(e, skip_existing):
         cmd = [sys.executable, 'src/nl_pe/eval_manager.py', '-c', exp_dir]
         if skip_existing:
             cmd.append('--skip-existing')
+        if times:
+            cmd.append('--times')
+        if skip_trec:
+            cmd.append('--skip-trec')
         subprocess.run(cmd, cwd='.')
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run evaluation for a batch of experiments in the specified directory.")
     parser.add_argument("-c", "--eval-dir", type=str, required=True, help="The path to the directory containing the batch of evaluations.")
     parser.add_argument("-se","--skip-existing", action="store_true", help="Skip evaluation if output files already exist")
+    parser.add_argument("-t", "--times", action="store_true", help="Run timing analysis in eval manager")
+    parser.add_argument(
+        "-strec",
+        "--skip-trec",
+        action="store_true",
+        help="Skip TREC eval methods when all_queries_trec_eval_results.jsonl already exists",
+    )
     args = parser.parse_args()
 
-    run_eval_batch(args.eval_dir, args.skip_existing)
+    run_eval_batch(
+        args.eval_dir,
+        args.skip_existing,
+        times=args.times,
+        skip_trec=args.skip_trec,
+    )
