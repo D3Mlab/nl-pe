@@ -109,6 +109,196 @@ def make_two_metric_table(
 
     return "\n".join(lines)
 
+
+def _format_table_number(value, dec_pts=1):
+    if value is None or pd.isna(value):
+        return "-"
+    return f"{float(value):.{dec_pts}f}"
+
+
+def _load_times_df(exp_dir):
+    times_path = os.path.join(exp_dir, "times.csv")
+    if not os.path.exists(times_path):
+        return None
+
+    try:
+        return pd.read_csv(times_path)
+    except Exception:
+        return None
+
+
+def _time_stat_from_df(df, value_col, stat, ignore_IO=False):
+    if df is None or value_col not in df.columns:
+        return None
+
+    values = pd.to_numeric(df[value_col], errors="coerce")
+
+    # Optional total-time correction removing IO contribution
+    if ignore_IO and value_col == "tot":
+        has_gp_inf = "gp_inf" in df.columns
+        has_gp_inf_no_io = "gp_inf_no_IO" in df.columns
+
+        if has_gp_inf and has_gp_inf_no_io:
+            gp_inf = pd.to_numeric(df["gp_inf"], errors="coerce")
+            gp_inf_no_io = pd.to_numeric(df["gp_inf_no_IO"], errors="coerce")
+            io_vals = gp_inf - gp_inf_no_io
+            values = values - io_vals
+        elif has_gp_inf or has_gp_inf_no_io:
+            # Ambiguous partial IO fields -> cannot safely recover IO-only component.
+            values = pd.Series(np.nan, index=values.index)
+
+    valid = values.dropna()
+    if valid.empty:
+        return None
+
+    if stat == "mean":
+        return float(valid.mean())
+    if stat == "std":
+        std_val = float(valid.std(ddof=1))
+        return None if np.isnan(std_val) else std_val
+
+    raise ValueError(f"Unsupported stat '{stat}'. Use 'mean' or 'std'.")
+
+
+def _build_time_rows_from_specs(
+    row_specs,
+    datasets,
+    *,
+    stat,
+    ignore_IO=False,
+    dec_pts=1,
+    trials_root=os.path.join("trials", "ir"),
+):
+    """
+    row_specs supports either:
+      - preformatted latex row string (passed through)
+      - tuple/list: (display_name, relative_method_path)
+        where final experiment path is trials_root/<dataset>/<relative_method_path>
+    """
+    rows = []
+
+    for row_spec in row_specs:
+        if isinstance(row_spec, str):
+            rows.append(row_spec)
+            continue
+
+        if not (isinstance(row_spec, (list, tuple)) and len(row_spec) == 2):
+            raise ValueError(
+                "Each row spec must be either a preformatted string or "
+                "(display_name, relative_method_path)."
+            )
+
+        method_name, rel_path = row_spec
+        row_cells = [str(method_name)]
+
+        for ds in datasets:
+            exp_dir = os.path.join(trials_root, ds, str(rel_path))
+            df = _load_times_df(exp_dir)
+
+            total_stat = _time_stat_from_df(
+                df,
+                "tot",
+                stat,
+                ignore_IO=ignore_IO,
+            )
+            llm_stat = _time_stat_from_df(
+                df,
+                "llm",
+                stat,
+                ignore_IO=False,
+            )
+
+            row_cells.extend([
+                _format_table_number(total_stat, dec_pts=dec_pts),
+                _format_table_number(llm_stat, dec_pts=dec_pts),
+            ])
+
+        rows.append(" & ".join(row_cells))
+
+    return rows
+
+
+def make_two_metric_time_tables(
+    *,
+    datasets: List[str],
+    dataset_names: List[str],
+    metric_str_l: str,
+    metric_str_r: str,
+    baseline_rows: List[str],
+    method_rows: List[str],
+    caption: str = "MAIN",
+    label: str = "tab:main",
+    table_env: str = "table*",
+    size_cmd: str = r"\small",
+    ignore_IO: bool = False,
+) -> str:
+    """
+    Temporal analysis twin-table builder.
+
+    Accepts the same kwargs as make_two_metric_table, plus ignore_IO.
+    It builds two tables using times.csv per experiment:
+      1) mean table for [tot, llm]
+      2) std table  for [tot, llm]
+
+    If ignore_IO=True, the total metric uses:
+        adjusted_tot = tot - (gp_inf - gp_inf_no_IO)
+    whenever both gp_inf and gp_inf_no_IO exist.
+    """
+
+    mean_baselines = _build_time_rows_from_specs(
+        baseline_rows,
+        datasets,
+        stat="mean",
+        ignore_IO=ignore_IO,
+    )
+    mean_methods = _build_time_rows_from_specs(
+        method_rows,
+        datasets,
+        stat="mean",
+        ignore_IO=ignore_IO,
+    )
+
+    std_baselines = _build_time_rows_from_specs(
+        baseline_rows,
+        datasets,
+        stat="std",
+        ignore_IO=ignore_IO,
+    )
+    std_methods = _build_time_rows_from_specs(
+        method_rows,
+        datasets,
+        stat="std",
+        ignore_IO=ignore_IO,
+    )
+
+    mean_table = make_two_metric_table(
+        datasets=datasets,
+        dataset_names=dataset_names,
+        metric_str_l=metric_str_l,
+        metric_str_r=metric_str_r,
+        baseline_rows=mean_baselines,
+        method_rows=mean_methods,
+        caption=f"{caption} (Mean)",
+        label=f"{label}_mean",
+        table_env=table_env,
+        size_cmd=size_cmd,
+    )
+
+    std_table = make_two_metric_table(
+        datasets=datasets,
+        dataset_names=dataset_names,
+        metric_str_l=metric_str_l,
+        metric_str_r=metric_str_r,
+        baseline_rows=std_baselines,
+        method_rows=std_methods,
+        caption=f"{caption} (STD)",
+        label=f"{label}_std",
+        table_env=table_env,
+        size_cmd=size_cmd,
+    )
+
+    return mean_table + "\n\n\n" + std_table
+
 def build_baseline_rows(
     df,
     baseline_names,
