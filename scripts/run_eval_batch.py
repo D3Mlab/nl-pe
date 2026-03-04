@@ -76,7 +76,7 @@ def run_eval_batch(e, skip_existing, times=False, skip_trec=False, valid_only=Fa
         "lw_q_dec",
     }
     # Add path parts here if you want to force-skip matching experiments.
-    not_valid_parts = {'gt','gpt-5.2','gpt-5-nano'}
+    not_valid_parts = {'gt','gpt-5.2','gpt-5-nano', 'q2d_5q', 'eqr_5q'}
 
     # Run evaluation for each experiment using subprocess with new cmd line interface
     for exp_dir in exp_dirs:
