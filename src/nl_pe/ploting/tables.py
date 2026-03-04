@@ -151,6 +151,18 @@ def _time_stat_from_df(df, value_col, stat, ignore_IO=False):
     if valid.empty:
         return None
 
+    # Remove outliers using 1.5 IQR rule before computing mean/std
+    q1 = valid.quantile(0.25)
+    q3 = valid.quantile(0.75)
+    iqr = q3 - q1
+
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+
+    valid = valid[(valid >= lower_bound) & (valid <= upper_bound)]
+    if valid.empty:
+        return None
+
     if stat == "mean":
         return float(valid.mean())
     if stat == "std":
