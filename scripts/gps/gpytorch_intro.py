@@ -10,6 +10,7 @@ This script demonstrates:
 - Variational GPs for large datasets
 - Different mean functions
 
+
 Requires: torch, gpytorch, matplotlib, pandas, numpy
 """
 

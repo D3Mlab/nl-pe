@@ -1,9 +1,29 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
+import gpytorch
 from matplotlib.patches import Circle
 from matplotlib.colors import to_hex
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel
+
+
+class PlotExactGPModel(gpytorch.models.ExactGP):
+    def __init__(self, train_x, train_y, likelihood, lengthscale, signal_noise):
+        super().__init__(train_x, train_y, likelihood)
+
+        # Constant mean fixed at 0.0
+        self.mean_module = gpytorch.means.ConstantMean()
+        self.mean_module.initialize(constant=0.0)
+        self.mean_module.raw_constant.requires_grad_(False)
+
+        base_kernel = gpytorch.kernels.RBFKernel()
+        self.covar_module = gpytorch.kernels.ScaleKernel(base_kernel)
+        self.covar_module.base_kernel.initialize(lengthscale=lengthscale)
+        self.covar_module.initialize(outputscale=signal_noise)
+
+    def forward(self, x):
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
 
 def make_unobserved_plot(**kwargs):
@@ -153,12 +173,24 @@ def make_unobserved_plot(**kwargs):
 
         X_train=np.array([p[0] for p in observed_points])
         y_train=np.array([p[1] for p in observed_points])
+        X_train_t = torch.tensor(X_train, dtype=torch.float32)
+        y_train_t = torch.tensor(y_train, dtype=torch.float32)
 
-        kernel = ConstantKernel(gp_os)*RBF(length_scale=gp_ls)
+        likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        likelihood.initialize(noise=gp_noise)
 
-        gp = GaussianProcessRegressor(kernel=kernel,alpha=gp_noise)
+        model = PlotExactGPModel(
+            X_train_t,
+            y_train_t,
+            likelihood,
+            lengthscale=gp_ls,
+            signal_noise=gp_os,
+        )
 
-        gp.fit(X_train,y_train)
+        model.eval()
+        likelihood.eval()
+
+        gp = (model, likelihood)
 
     # ------------------------------------------------
     # POINT GENERATION WITH OVERLAP CONTROL
@@ -255,8 +287,12 @@ def make_unobserved_plot(**kwargs):
     elif color_style=="gp_points":
 
         all_points=np.vstack([accepted_points,rel_pts])
+        model, likelihood = gp
+        all_points_t = torch.tensor(all_points, dtype=torch.float32)
 
-        preds=gp.predict(all_points)
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            preds = likelihood(model(all_points_t)).mean.detach().cpu().numpy()
+
         preds=np.clip(preds,0,max_rel)
 
         scores=preds/max_rel
