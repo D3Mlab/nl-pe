@@ -61,6 +61,8 @@ def make_unobserved_plot(**kwargs):
 
     dense_cmap = kwargs.get("dense_cmap","viridis")
     dense_resolution = kwargs.get("dense_resolution",200)
+    gp_cont_resolution = kwargs.get("gp_cont_resolution", dense_resolution)
+    gp_cont_alpha = kwargs.get("gp_cont_alpha", 0.6)
 
     no_color_outside_circle = kwargs.get("no_color_outside_circle",False)
 
@@ -166,7 +168,7 @@ def make_unobserved_plot(**kwargs):
     # GP MODEL
     # ------------------------------------------------
     gp=None
-    if color_style=="gp_points":
+    if color_style in ["gp_points", "gp_cont"]:
 
         if len(observed_points)==0:
             raise ValueError("gp_points requires observed_points")
@@ -191,6 +193,36 @@ def make_unobserved_plot(**kwargs):
         likelihood.eval()
 
         gp = (model, likelihood)
+
+    # ------------------------------------------------
+    # GP CONTINUOUS HEATMAP
+    # ------------------------------------------------
+    if color_style=="gp_cont":
+        xs=np.linspace(x_lims[0],x_lims[1],gp_cont_resolution)
+        ys=np.linspace(y_lims[0],y_lims[1],gp_cont_resolution)
+
+        Xg,Yg=np.meshgrid(xs,ys)
+        grid_points = np.column_stack([Xg.ravel(), Yg.ravel()])
+
+        model, likelihood = gp
+        grid_points_t = torch.tensor(grid_points, dtype=torch.float32)
+
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            gp_mean = likelihood(model(grid_points_t)).mean.detach().cpu().numpy()
+
+        gp_mean = gp_mean.reshape(gp_cont_resolution, gp_cont_resolution)
+        gp_mean = np.clip(gp_mean, 0, max_rel)
+        gp_mean = gp_mean / max_rel
+
+        ax.imshow(
+            gp_mean,
+            extent=[*x_lims,*y_lims],
+            origin="lower",
+            cmap=dense_cmap,
+            alpha=gp_cont_alpha,
+            aspect="auto",
+            interpolation="bicubic",
+        )
 
     # ------------------------------------------------
     # POINT GENERATION WITH OVERLAP CONTROL
@@ -321,6 +353,28 @@ def make_unobserved_plot(**kwargs):
 
             for p,c,scr in zip(rel_pts,colors[idx:idx+n],scores[idx:idx+n]):
                 printable.append((scr,tuple(np.round(p,4)),to_hex(c)))
+
+    elif color_style=="gp_cont":
+
+        if len(accepted_points)>0:
+            ax.scatter(
+                accepted_points[:,0],
+                accepted_points[:,1],
+                edgecolors="grey",
+                facecolors="none",
+                **{k:v for k,v in irel_marker_kwargs.items()
+                   if k not in ["edgecolors","facecolors"]}
+            )
+
+        if len(rel_pts)>0:
+            ax.scatter(
+                rel_pts[:,0],
+                rel_pts[:,1],
+                edgecolors="grey",
+                facecolors="none",
+                **{k:v for k,v in rel_marker_kwargs.items()
+                   if k not in ["edgecolors","facecolors"]}
+            )
 
     else:
 
