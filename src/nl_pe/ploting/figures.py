@@ -1,18 +1,22 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.patches import Circle
 
 
 def make_unobserved_plot(**kwargs):
 
-    # ---- figure settings ----
     fig_w = kwargs.get("fig_w", 3)
     fig_h = kwargs.get("fig_h", 4)
     dpi = kwargs.get("dpi", 100)
+
+    font = kwargs.get("font", "Calibri")
+    fontsize = kwargs.get("fontsize", 12)
 
     x_lims = kwargs.get("x_lims", (0, 1))
     y_lims = kwargs.get("y_lims", (0, 1))
 
     inc_legend = kwargs.get("inc_legend", False)
+    legend_coords = kwargs.get("legend_coords", None)
 
     axis_labels = kwargs.get("axis_labels", [])
 
@@ -20,54 +24,110 @@ def make_unobserved_plot(**kwargs):
 
     seed = kwargs.get("seed", 42)
 
-    # ---- cluster parameters ----
-    centroids = kwargs.get("unobserved_centroids", [])
-    covs = kwargs.get("unobserved_cluster_covs", [])
-    n_points = kwargs.get("unobserved_n_points_per_cluster", [])
-
     cov_scale = kwargs.get("cov_scale", 1.0)
-
-    docs_name = kwargs.get("docs_name", "docs")
 
     point_overlap_allowed = kwargs.get("point_overlap_allowed", True)
 
-    # ---- marker defaults ----
-    default_marker_kwargs = dict(
+    use_dense_coloring = kwargs.get("use_dense_coloring", False)
+    dense_cmap = kwargs.get("dense_cmap", "viridis")
+    dense_resolution = kwargs.get("dense_resolution", 200)
+
+    centroids = kwargs.get("irel_unobserved_centroids", [])
+    covs = kwargs.get("irel_unobserved_cluster_covs", [])
+    n_points = kwargs.get("irel_unobserved_n_points_per_cluster", [])
+
+    rel_unobserved_locs = kwargs.get("rel_unobserved_locs", [])
+
+    query_loc = kwargs.get("query_loc", None)
+    query_rel_circle_radius = kwargs.get("query_rel_circle_radius", None)
+
+    default_irel_marker_kwargs = dict(
         marker="o",
         facecolors="none",
         edgecolors="grey",
         s=30,
-        label=docs_name
+        linewidths=1.2,
+        label="Irel. docs"
     )
 
-    user_marker_kwargs = kwargs.get("unobserved_marker_kwargs", {})
-    marker_kwargs = {**default_marker_kwargs, **user_marker_kwargs}
+    default_rel_marker_kwargs = dict(
+        marker="^",
+        facecolors="none",
+        edgecolors="grey",
+        s=30,
+        linewidths=1.2,
+        label="Rel. docs"
+    )
 
-    s = marker_kwargs.get("s", 30)
+    default_query_marker_kwargs = dict(
+        marker="x",
+        color="black",
+        s=30,
+        linewidths=1.5,
+        label="Query"
+    )
 
-    # ---- random seed ----
+    default_query_circle_kwargs = dict(
+        edgecolor="grey",
+        linestyle="--",
+        linewidth=1.2,
+        fill=False
+    )
+
+    irel_marker_kwargs = {**default_irel_marker_kwargs,
+                          **kwargs.get("irel_marker_kwargs", {})}
+
+    rel_marker_kwargs = {**default_rel_marker_kwargs,
+                         **kwargs.get("rel_marker_kwargs", {})}
+
+    query_marker_kwargs = {**default_query_marker_kwargs,
+                           **kwargs.get("query_marker_kwargs", {})}
+
+    query_circle_kwargs = {**default_query_circle_kwargs,
+                           **kwargs.get("query_rel_circle_kwargs", {})}
+
+    s = irel_marker_kwargs.get("s", 30)
+
     np.random.seed(seed)
 
-    # ---- figure ----
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
 
     ax.set_xlim(*x_lims)
     ax.set_ylim(*y_lims)
 
-    # remove ticks
     ax.set_xticks([])
     ax.set_yticks([])
 
-    # remove borders
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    # axis labels
     if axis_labels:
-        ax.set_xlabel(axis_labels[0])
-        ax.set_ylabel(axis_labels[1])
+        ax.set_xlabel(axis_labels[0], fontsize=fontsize, fontname=font)
+        ax.set_ylabel(axis_labels[1], fontsize=fontsize, fontname=font)
 
-    # ---- compute marker radius in data units ----
+    # ---- background density heatmap ----
+    if use_dense_coloring and query_loc is not None:
+
+        xs = np.linspace(x_lims[0], x_lims[1], dense_resolution)
+        ys = np.linspace(y_lims[0], y_lims[1], dense_resolution)
+
+        X, Y = np.meshgrid(xs, ys)
+
+        dist = np.sqrt((X - query_loc[0])**2 + (Y - query_loc[1])**2)
+
+        max_dist = np.max(dist)
+
+        Z = 1 - (dist / max_dist)
+
+        ax.imshow(
+            Z,
+            extent=[*x_lims, *y_lims],
+            origin="lower",
+            cmap=dense_cmap,
+            alpha=0.6,
+            aspect="auto"
+        )
+
     fig.canvas.draw()
 
     r_points = np.sqrt(s / np.pi)
@@ -85,7 +145,6 @@ def make_unobserved_plot(**kwargs):
     r_data = r_points / 72 * max(x_per_in, y_per_in)
     min_dist = 2 * r_data
 
-    # ---- sample points ----
     accepted_points = []
 
     for centroid, cov, n in zip(centroids, covs, n_points):
@@ -125,11 +184,30 @@ def make_unobserved_plot(**kwargs):
 
     if len(accepted_points) > 0:
         pts = np.array(accepted_points)
-        ax.scatter(pts[:, 0], pts[:, 1], **marker_kwargs)
+        ax.scatter(pts[:, 0], pts[:, 1], **irel_marker_kwargs)
 
-    # legend
+    if len(rel_unobserved_locs) > 0:
+        rel_pts = np.array(rel_unobserved_locs)
+        ax.scatter(rel_pts[:, 0], rel_pts[:, 1], **rel_marker_kwargs)
+
+    if query_loc is not None:
+        ax.scatter([query_loc[0]], [query_loc[1]], **query_marker_kwargs)
+
+    if query_loc is not None and query_rel_circle_radius is not None:
+        circle = Circle(query_loc, query_rel_circle_radius,
+                        **query_circle_kwargs)
+        ax.add_patch(circle)
+
     if inc_legend:
-        ax.legend()
+
+        if legend_coords is None:
+            ax.legend(prop={"family": font, "size": fontsize})
+        else:
+            ax.legend(
+                prop={"family": font, "size": fontsize},
+                bbox_to_anchor=legend_coords,
+                loc="upper left"
+            )
 
     if show_fig:
         plt.show()
