@@ -207,22 +207,22 @@ def _build_time_rows_from_specs(
             exp_dir = os.path.join(trials_root, ds, str(rel_path))
             df = _load_times_df(exp_dir)
 
-            total_stat = _time_stat_from_df(
-                df,
-                "tot",
-                stat,
-                ignore_IO=ignore_IO,
-            )
             llm_stat = _time_stat_from_df(
                 df,
                 "llm",
                 stat,
                 ignore_IO=False,
             )
+            total_stat = _time_stat_from_df(
+                df,
+                "tot",
+                stat,
+                ignore_IO=ignore_IO,
+            )
 
             row_cells.extend([
-                _format_table_number(total_stat, dec_pts=dec_pts),
                 _format_table_number(llm_stat, dec_pts=dec_pts),
+                _format_table_number(total_stat, dec_pts=dec_pts),
             ])
 
         rows.append(" & ".join(row_cells))
