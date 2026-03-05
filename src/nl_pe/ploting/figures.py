@@ -32,12 +32,16 @@ def make_unobserved_plot(**kwargs):
     show_fig = kwargs.get("show_fig",True)
 
     seed = kwargs.get("seed",42)
+
     cov_scale = kwargs.get("cov_scale",1.0)
+
     point_overlap_allowed = kwargs.get("point_overlap_allowed",True)
 
     color_style = kwargs.get("color_style",None)
+
     dense_cmap = kwargs.get("dense_cmap","viridis")
     dense_resolution = kwargs.get("dense_resolution",200)
+
     no_color_outside_circle = kwargs.get("no_color_outside_circle",False)
 
     print_points = kwargs.get("print_points",False)
@@ -54,12 +58,12 @@ def make_unobserved_plot(**kwargs):
     query_loc = kwargs.get("query_loc",None)
     query_rel_circle_radius = kwargs.get("query_rel_circle_radius",None)
 
-    obs_points = kwargs.get("obs_points",[])
-    obs_vals = kwargs.get("obs_vals",[])
+    observed_points = kwargs.get("observed_points",[])
+
     max_rel = kwargs.get("max_rel",1)
 
     # ------------------------------------------------
-    # GP PARAMS
+    # GP PARAMETERS
     # ------------------------------------------------
     gp_ls = kwargs.get("gp_ls",0.2)
     gp_os = kwargs.get("gp_os",1.0)
@@ -68,40 +72,34 @@ def make_unobserved_plot(**kwargs):
     # ------------------------------------------------
     # MARKER DEFAULTS
     # ------------------------------------------------
-    default_irel_marker_kwargs=dict(
-        marker="o",facecolors="none",edgecolors="grey",s=30,linewidths=1.2,label="Irel. docs"
-    )
+    default_irel_marker=dict(marker="o",facecolors="none",edgecolors="grey",s=30,linewidths=1.2,label="Irel. docs")
+    default_rel_marker=dict(marker="^",facecolors="none",edgecolors="grey",s=30,linewidths=1.2,label="Rel. docs")
+    default_query_marker=dict(marker="x",color="black",s=30,linewidths=1.5,label="Query")
 
-    default_rel_marker_kwargs=dict(
-        marker="^",facecolors="none",edgecolors="grey",s=30,linewidths=1.2,label="Rel. docs"
-    )
+    default_obs_irel=dict(marker="o",s=40,linewidths=1.2,edgecolors="black",label="Obs Irel")
+    default_obs_rel=dict(marker="^",s=40,linewidths=1.2,edgecolors="black",label="Obs Rel")
+    default_obs_query=dict(marker="s",s=40,linewidths=1.2,edgecolors="black",label="Obs Query")
 
-    default_query_marker_kwargs=dict(
-        marker="x",color="black",s=30,linewidths=1.5,label="Query"
-    )
+    default_circle=dict(edgecolor="grey",linestyle="--",linewidth=1.2,fill=False)
 
-    default_query_circle_kwargs=dict(
-        edgecolor="grey",linestyle="--",linewidth=1.2,fill=False
-    )
+    irel_marker_kwargs={**default_irel_marker,**kwargs.get("irel_marker_kwargs",{})}
+    rel_marker_kwargs={**default_rel_marker,**kwargs.get("rel_marker_kwargs",{})}
+    query_marker_kwargs={**default_query_marker,**kwargs.get("query_marker_kwargs",{})}
 
-    default_obs_marker_kwargs=dict(
-        marker='o',s=40,linewidths=1.2,edgecolors='black',label="Obs"
-    )
+    obs_irel_marker_kwargs={**default_obs_irel,**kwargs.get("obs_irel_marker_kwargs",{})}
+    obs_rel_marker_kwargs={**default_obs_rel,**kwargs.get("obs_rel_marker_kwargs",{})}
+    obs_query_marker_kwargs={**default_obs_query,**kwargs.get("obs_query_marker_kwargs",{})}
 
-    irel_marker_kwargs={**default_irel_marker_kwargs,**kwargs.get("irel_marker_kwargs",{})}
-    rel_marker_kwargs={**default_rel_marker_kwargs,**kwargs.get("rel_marker_kwargs",{})}
-    query_marker_kwargs={**default_query_marker_kwargs,**kwargs.get("query_marker_kwargs",{})}
-    query_circle_kwargs={**default_query_circle_kwargs,**kwargs.get("query_rel_circle_kwargs",{})}
-    obs_marker_kwargs={**default_obs_marker_kwargs,**kwargs.get("obs_marker_kwargs",{})}
+    query_circle_kwargs={**default_circle,**kwargs.get("query_rel_circle_kwargs",{})}
 
-    s=irel_marker_kwargs.get("s",30)
+    s = irel_marker_kwargs.get("s",30)
 
     np.random.seed(seed)
 
     # ------------------------------------------------
     # FIGURE
     # ------------------------------------------------
-    fig,ax=plt.subplots(figsize=(fig_w,fig_h),dpi=dpi)
+    fig,ax = plt.subplots(figsize=(fig_w,fig_h),dpi=dpi)
 
     ax.set_xlim(*x_lims)
     ax.set_ylim(*y_lims)
@@ -120,7 +118,7 @@ def make_unobserved_plot(**kwargs):
         ax.set_xlabel(axis_labels[0],fontsize=fontsize,fontname=font)
         ax.set_ylabel(axis_labels[1],fontsize=fontsize,fontname=font)
 
-    cmap=plt.get_cmap(dense_cmap)
+    cmap = plt.get_cmap(dense_cmap)
 
     # ------------------------------------------------
     # CONTINUOUS HEATMAP
@@ -141,14 +139,8 @@ def make_unobserved_plot(**kwargs):
             mask=dist>query_rel_circle_radius
             Z[mask]=np.nan
 
-        ax.imshow(
-            Z,
-            extent=[*x_lims,*y_lims],
-            origin="lower",
-            cmap=dense_cmap,
-            alpha=0.6,
-            aspect="auto"
-        )
+        ax.imshow(Z,extent=[*x_lims,*y_lims],origin="lower",
+                  cmap=dense_cmap,alpha=0.6,aspect="auto")
 
     # ------------------------------------------------
     # GP MODEL
@@ -156,13 +148,17 @@ def make_unobserved_plot(**kwargs):
     gp=None
     if color_style=="gp_points":
 
-        if len(obs_points)==0:
-            raise ValueError("gp_points requires obs_points and obs_vals")
+        if len(observed_points)==0:
+            raise ValueError("gp_points requires observed_points")
 
-        kernel=ConstantKernel(gp_os)*RBF(length_scale=gp_ls)
-        gp=GaussianProcessRegressor(kernel=kernel,alpha=gp_noise)
+        X_train=np.array([p[0] for p in observed_points])
+        y_train=np.array([p[1] for p in observed_points])
 
-        gp.fit(np.array(obs_points),np.array(obs_vals))
+        kernel = ConstantKernel(gp_os)*RBF(length_scale=gp_ls)
+
+        gp = GaussianProcessRegressor(kernel=kernel,alpha=gp_noise)
+
+        gp.fit(X_train,y_train)
 
     # ------------------------------------------------
     # POINT GENERATION WITH OVERLAP CONTROL
@@ -220,106 +216,75 @@ def make_unobserved_plot(**kwargs):
     printable=[]
 
     # ------------------------------------------------
-    # POINT COLOR MODE
+    # POINT COLOR MODES
     # ------------------------------------------------
     if color_style=="point_color" and query_loc is not None:
 
         all_points=np.vstack([accepted_points,rel_pts])
 
-        if len(all_points)>0:
+        dists=np.linalg.norm(all_points-query_loc,axis=1)
+        max_dist=np.max(dists) if np.max(dists)!=0 else 1
 
-            dists=np.linalg.norm(all_points-query_loc,axis=1)
-            max_dist=np.max(dists) if np.max(dists)!=0 else 1
+        scores=1-(dists/max_dist)
+        colors=cmap(scores)
 
-            scores=1-(dists/max_dist)
-            colors=cmap(scores)
+        idx=0
 
-            idx=0
+        if len(accepted_points)>0:
+            n=len(accepted_points)
+            ax.scatter(accepted_points[:,0],accepted_points[:,1],
+                       edgecolors=colors[idx:idx+n],facecolors="none",
+                       **{k:v for k,v in irel_marker_kwargs.items()
+                          if k not in ["edgecolors","facecolors"]})
 
-            if len(accepted_points)>0:
+            for p,c,scr in zip(accepted_points,colors[idx:idx+n],scores[idx:idx+n]):
+                printable.append((scr,tuple(np.round(p,4)),to_hex(c)))
 
-                n=len(accepted_points)
+            idx+=n
 
-                ax.scatter(
-                    accepted_points[:,0],
-                    accepted_points[:,1],
-                    edgecolors=colors[idx:idx+n],
-                    facecolors="none",
-                    **{k:v for k,v in irel_marker_kwargs.items()
-                       if k not in ["edgecolors","facecolors"]}
-                )
+        if len(rel_pts)>0:
+            n=len(rel_pts)
+            ax.scatter(rel_pts[:,0],rel_pts[:,1],
+                       edgecolors=colors[idx:idx+n],facecolors="none",
+                       **{k:v for k,v in rel_marker_kwargs.items()
+                          if k not in ["edgecolors","facecolors"]})
 
-                for p,c,s in zip(accepted_points,colors[idx:idx+n],scores[idx:idx+n]):
-                    printable.append(("irel",s,tuple(np.round(p,4)),to_hex(c)))
+            for p,c,scr in zip(rel_pts,colors[idx:idx+n],scores[idx:idx+n]):
+                printable.append((scr,tuple(np.round(p,4)),to_hex(c)))
 
-                idx+=n
-
-            if len(rel_pts)>0:
-
-                n=len(rel_pts)
-
-                ax.scatter(
-                    rel_pts[:,0],
-                    rel_pts[:,1],
-                    edgecolors=colors[idx:idx+n],
-                    facecolors="none",
-                    **{k:v for k,v in rel_marker_kwargs.items()
-                       if k not in ["edgecolors","facecolors"]}
-                )
-
-                for p,c,s in zip(rel_pts,colors[idx:idx+n],scores[idx:idx+n]):
-                    printable.append(("rel",s,tuple(np.round(p,4)),to_hex(c)))
-
-    # ------------------------------------------------
-    # GP COLOR MODE
-    # ------------------------------------------------
     elif color_style=="gp_points":
 
         all_points=np.vstack([accepted_points,rel_pts])
 
-        if len(all_points)>0:
+        preds=gp.predict(all_points)
+        preds=np.clip(preds,0,max_rel)
 
-            preds=gp.predict(all_points)
-            preds=np.clip(preds,0,max_rel)
+        scores=preds/max_rel
+        colors=cmap(scores)
 
-            scores=preds/max_rel
-            colors=cmap(scores)
+        idx=0
 
-            idx=0
+        if len(accepted_points)>0:
+            n=len(accepted_points)
+            ax.scatter(accepted_points[:,0],accepted_points[:,1],
+                       edgecolors=colors[idx:idx+n],facecolors="none",
+                       **{k:v for k,v in irel_marker_kwargs.items()
+                          if k not in ["edgecolors","facecolors"]})
 
-            if len(accepted_points)>0:
+            for p,c,scr in zip(accepted_points,colors[idx:idx+n],scores[idx:idx+n]):
+                printable.append((scr,tuple(np.round(p,4)),to_hex(c)))
 
-                n=len(accepted_points)
+            idx+=n
 
-                ax.scatter(
-                    accepted_points[:,0],
-                    accepted_points[:,1],
-                    edgecolors=colors[idx:idx+n],
-                    facecolors="none",
-                    **{k:v for k,v in irel_marker_kwargs.items()
-                       if k not in ["edgecolors","facecolors"]}
-                )
+        if len(rel_pts)>0:
+            n=len(rel_pts)
+            ax.scatter(rel_pts[:,0],rel_pts[:,1],
+                       edgecolors=colors[idx:idx+n],facecolors="none",
+                       **{k:v for k,v in rel_marker_kwargs.items()
+                          if k not in ["edgecolors","facecolors"]})
 
-                for p,c,s in zip(accepted_points,colors[idx:idx+n],scores[idx:idx+n]):
-                    printable.append(("irel_gp",s,tuple(np.round(p,4)),to_hex(c)))
-
-                idx+=n
-
-            if len(rel_pts)>0:
-
-                n=len(rel_pts)
-
-                ax.scatter(
-                    rel_pts[:,0],
-                    rel_pts[:,1],
-                    edgecolors=colors[idx:idx+n],
-                    facecolors="none",
-                    **{k:v for k,v in rel_marker_kwargs.items()
-                       if k not in ["edgecolors","facecolors"]}
-                )
-
-                for p,c,s in zip(rel_pts,colors[idx:idx+n],scores[idx:idx+n]):
-                    printable.append(("rel_gp",s,tuple(np.round(p,4)),to_hex(c)))
+            for p,c,scr in zip(rel_pts,colors[idx:idx+n],scores[idx:idx+n]):
+                printable.append((scr,tuple(np.round(p,4)),to_hex(c)))
 
     else:
 
@@ -330,35 +295,37 @@ def make_unobserved_plot(**kwargs):
             ax.scatter(rel_pts[:,0],rel_pts[:,1],**rel_marker_kwargs)
 
     # ------------------------------------------------
-    # OBSERVED POINTS
+    # OBSERVED POINTS (STYLE BY TYPE, COLOR BY LABEL)
     # ------------------------------------------------
-    if len(obs_points)>0:
+    for (pt,val,ptype) in observed_points:
 
-        obs_pts=np.array(obs_points)
+        score=np.clip(val,0,max_rel)/max_rel
+        color=cmap(score)
 
-        vals=np.clip(np.array(obs_vals),0,max_rel)
-        scores=vals/max_rel
+        if ptype=="irel":
+            style=obs_irel_marker_kwargs
+        elif ptype=="rel":
+            style=obs_rel_marker_kwargs
+        elif ptype=="query":
+            style=obs_query_marker_kwargs
+        else:
+            raise ValueError("ptype must be 'irel','rel','query'")
 
-        colors=cmap(scores)
+        style=dict(style)
+        style.pop("color",None)
+        style.pop("c",None)
 
-        obs_kwargs=dict(obs_marker_kwargs)
-        obs_kwargs.pop("color",None)
-        obs_kwargs.pop("c",None)
+        ax.scatter(pt[0],pt[1],c=[color],**style)
 
-        ax.scatter(obs_pts[:,0],obs_pts[:,1],c=colors,**obs_kwargs)
-
-        for p,v,c in zip(obs_pts,vals,colors):
-            printable.append(("obs",v,tuple(np.round(p,4)),to_hex(c)))
+        printable.append((score,tuple(np.round(pt,4)),to_hex(color)))
 
     # ------------------------------------------------
-    # PRINT
+    # PRINT POINTS
     # ------------------------------------------------
     if print_points:
-
-        printable.sort(key=lambda x:x[1] if x[1] is not None else -np.inf,reverse=True)
-
-        for typ,score,pt,col in printable:
-            print(f"{typ:8s} {pt} score={score:.4f} color={col}")
+        printable.sort(key=lambda x:x[0],reverse=True)
+        for score,point,color in printable:
+            print(f"Point {point} score={score:.4f} color={color}")
 
     # ------------------------------------------------
     # QUERY
@@ -367,7 +334,6 @@ def make_unobserved_plot(**kwargs):
         ax.scatter([query_loc[0]],[query_loc[1]],**query_marker_kwargs)
 
     if query_loc is not None and query_rel_circle_radius is not None:
-
         circle=Circle(query_loc,query_rel_circle_radius,**query_circle_kwargs)
         ax.add_patch(circle)
 
