@@ -63,6 +63,9 @@ def make_unobserved_plot(**kwargs):
     dense_resolution = kwargs.get("dense_resolution",200)
     gp_cont_resolution = kwargs.get("gp_cont_resolution", dense_resolution)
     gp_cont_alpha = kwargs.get("gp_cont_alpha", 0.6)
+    gp_contour_resolution = kwargs.get("gp_contour_resolution", dense_resolution)
+    gp_contour_alpha = kwargs.get("gp_contour_alpha", 0.8)
+    gp_contour_levels = kwargs.get("gp_contour_levels", 16)
 
     no_color_outside_circle = kwargs.get("no_color_outside_circle",False)
 
@@ -168,10 +171,10 @@ def make_unobserved_plot(**kwargs):
     # GP MODEL
     # ------------------------------------------------
     gp=None
-    if color_style in ["gp_points", "gp_cont"]:
+    if color_style in ["gp_points", "gp_cont", "gp_contour"]:
 
         if len(observed_points)==0:
-            raise ValueError("gp_points requires observed_points")
+            raise ValueError("GP coloring modes require observed_points")
 
         X_train=np.array([p[0] for p in observed_points])
         y_train=np.array([p[1] for p in observed_points])
@@ -222,6 +225,36 @@ def make_unobserved_plot(**kwargs):
             alpha=gp_cont_alpha,
             aspect="auto",
             interpolation="bicubic",
+        )
+
+    # ------------------------------------------------
+    # GP CONTOUR BACKGROUND
+    # ------------------------------------------------
+    if color_style=="gp_contour":
+        xs=np.linspace(x_lims[0],x_lims[1],gp_contour_resolution)
+        ys=np.linspace(y_lims[0],y_lims[1],gp_contour_resolution)
+
+        Xg,Yg=np.meshgrid(xs,ys)
+        grid_points = np.column_stack([Xg.ravel(), Yg.ravel()])
+
+        model, likelihood = gp
+        grid_points_t = torch.tensor(grid_points, dtype=torch.float32)
+
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            gp_mean = likelihood(model(grid_points_t)).mean.detach().cpu().numpy()
+
+        gp_mean = gp_mean.reshape(gp_contour_resolution, gp_contour_resolution)
+        gp_mean = np.clip(gp_mean, 0, max_rel)
+        gp_mean = gp_mean / max_rel
+
+        ax.contour(
+            Xg,
+            Yg,
+            gp_mean,
+            levels=gp_contour_levels,
+            cmap=dense_cmap,
+            linewidths=0.8,
+            alpha=gp_contour_alpha,
         )
 
     # ------------------------------------------------
@@ -316,7 +349,7 @@ def make_unobserved_plot(**kwargs):
             for p,c,scr in zip(rel_pts,colors[idx:idx+n],scores[idx:idx+n]):
                 printable.append((scr,tuple(np.round(p,4)),to_hex(c)))
 
-    elif color_style=="gp_points":
+    elif color_style in ["gp_points", "gp_contour"]:
 
         all_points=np.vstack([accepted_points,rel_pts])
         model, likelihood = gp
