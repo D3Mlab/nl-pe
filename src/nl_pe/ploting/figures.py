@@ -4,6 +4,7 @@ import torch
 import gpytorch
 from matplotlib.patches import Circle
 from matplotlib.colors import to_hex
+from matplotlib.lines import Line2D
 
 
 class PlotExactGPModel(gpytorch.models.ExactGP):
@@ -46,6 +47,12 @@ def make_unobserved_plot(**kwargs):
 
     inc_legend = kwargs.get("inc_legend",False)
     legend_coords = kwargs.get("legend_coords",None)
+    legend_loc = kwargs.get("legend_loc","upper left")
+
+    inc_scale = kwargs.get("inc_scale",False)
+    scale_coords = kwargs.get("scale_coords",None)
+    scale_loc = kwargs.get("scale_loc","right")
+    scale_orientation = kwargs.get("scale_orientation","vertical")
 
     axis_labels = kwargs.get("axis_labels",[])
 
@@ -61,15 +68,21 @@ def make_unobserved_plot(**kwargs):
 
     dense_cmap = kwargs.get("dense_cmap","viridis")
     dense_resolution = kwargs.get("dense_resolution",200)
-    gp_cont_resolution = kwargs.get("gp_cont_resolution", dense_resolution)
-    gp_cont_alpha = kwargs.get("gp_cont_alpha", 0.6)
     gp_contour_resolution = kwargs.get("gp_contour_resolution", dense_resolution)
     gp_contour_alpha = kwargs.get("gp_contour_alpha", 0.8)
     gp_contour_levels = kwargs.get("gp_contour_levels", 16)
 
     no_color_outside_circle = kwargs.get("no_color_outside_circle",False)
 
+    show_circle_docs_in_col = kwargs.get("show_circle_docs_in_col", False)
+    dot_col_v_space = kwargs.get("dot_col_v_space", 1.0)
+    dot_col_size = kwargs.get("dot_col_size", 30)
+    dot_col_k = kwargs.get("dot_col_k", None)
+
     print_points = kwargs.get("print_points",False)
+
+    if color_style == "gp_cont":
+        raise ValueError("color_style='gp_cont' is no longer supported. Use 'gp_contour' instead.")
 
     # ------------------------------------------------
     # DATA INPUTS
@@ -144,6 +157,8 @@ def make_unobserved_plot(**kwargs):
         ax.set_ylabel(axis_labels[1],fontsize=fontsize,fontname=font)
 
     cmap = plt.get_cmap(dense_cmap)
+    scale_mappable=None
+    scale_label=None
 
     # ------------------------------------------------
     # CONTINUOUS HEATMAP
@@ -171,7 +186,7 @@ def make_unobserved_plot(**kwargs):
     # GP MODEL
     # ------------------------------------------------
     gp=None
-    if color_style in ["gp_points", "gp_cont", "gp_contour"]:
+    if color_style in ["gp_points", "gp_contour"]:
 
         if len(observed_points)==0:
             raise ValueError("GP coloring modes require observed_points")
@@ -198,36 +213,6 @@ def make_unobserved_plot(**kwargs):
         gp = (model, likelihood)
 
     # ------------------------------------------------
-    # GP CONTINUOUS HEATMAP
-    # ------------------------------------------------
-    if color_style=="gp_cont":
-        xs=np.linspace(x_lims[0],x_lims[1],gp_cont_resolution)
-        ys=np.linspace(y_lims[0],y_lims[1],gp_cont_resolution)
-
-        Xg,Yg=np.meshgrid(xs,ys)
-        grid_points = np.column_stack([Xg.ravel(), Yg.ravel()])
-
-        model, likelihood = gp
-        grid_points_t = torch.tensor(grid_points, dtype=torch.float32)
-
-        with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            gp_mean = likelihood(model(grid_points_t)).mean.detach().cpu().numpy()
-
-        gp_mean = gp_mean.reshape(gp_cont_resolution, gp_cont_resolution)
-        gp_mean = np.clip(gp_mean, 0, max_rel)
-        gp_mean = gp_mean / max_rel
-
-        ax.imshow(
-            gp_mean,
-            extent=[*x_lims,*y_lims],
-            origin="lower",
-            cmap=dense_cmap,
-            alpha=gp_cont_alpha,
-            aspect="auto",
-            interpolation="bicubic",
-        )
-
-    # ------------------------------------------------
     # GP CONTOUR BACKGROUND
     # ------------------------------------------------
     if color_style=="gp_contour":
@@ -247,7 +232,7 @@ def make_unobserved_plot(**kwargs):
         gp_mean = np.clip(gp_mean, 0, max_rel)
         gp_mean = gp_mean / max_rel
 
-        ax.contour(
+        contour_set = ax.contour(
             Xg,
             Yg,
             gp_mean,
@@ -256,6 +241,9 @@ def make_unobserved_plot(**kwargs):
             linewidths=0.8,
             alpha=gp_contour_alpha,
         )
+
+        scale_mappable=contour_set
+        scale_label="GP Posterior Mean"
 
     # ------------------------------------------------
     # POINT GENERATION WITH OVERLAP CONTROL
@@ -311,6 +299,63 @@ def make_unobserved_plot(**kwargs):
     rel_pts=np.array(rel_unobserved_locs) if len(rel_unobserved_locs)>0 else np.empty((0,2))
 
     printable=[]
+    plotted_docs=[]
+
+    def _extract_marker_color(style_kwargs, default_color="grey"):
+        if style_kwargs.get("c") is not None:
+            c = style_kwargs.get("c")
+            if isinstance(c, (list, tuple, np.ndarray)) and len(c) > 0:
+                try:
+                    return to_hex(c[0])
+                except Exception:
+                    return c[0]
+            return c
+
+        if style_kwargs.get("color") is not None:
+            try:
+                return to_hex(style_kwargs.get("color"))
+            except Exception:
+                return style_kwargs.get("color")
+
+        if style_kwargs.get("edgecolors") is not None:
+            edge = style_kwargs.get("edgecolors")
+            if isinstance(edge, (list, tuple, np.ndarray)) and len(edge) > 0:
+                try:
+                    return to_hex(edge[0])
+                except Exception:
+                    return edge[0]
+            try:
+                return to_hex(edge)
+            except Exception:
+                return edge
+
+        if style_kwargs.get("facecolors") is not None and style_kwargs.get("facecolors") != "none":
+            face = style_kwargs.get("facecolors")
+            if isinstance(face, (list, tuple, np.ndarray)) and len(face) > 0:
+                try:
+                    return to_hex(face[0])
+                except Exception:
+                    return face[0]
+            try:
+                return to_hex(face)
+            except Exception:
+                return face
+
+        try:
+            return to_hex(default_color)
+        except Exception:
+            return default_color
+
+    def _is_hollow_marker_style(style_kwargs, default_hollow=False):
+        face = style_kwargs.get("facecolors", style_kwargs.get("facecolor", None))
+        if face is None:
+            return default_hollow
+        return str(face).lower() == "none"
+
+    def _euclidean_distance(a, b):
+        a = np.array(a, dtype=float)
+        b = np.array(b, dtype=float)
+        return float(np.linalg.norm(a - b))
 
     # ------------------------------------------------
     # POINT COLOR MODES
@@ -325,6 +370,9 @@ def make_unobserved_plot(**kwargs):
         scores=1-(dists/max_dist)
         colors=cmap(scores)
 
+        scale_mappable=plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=1))
+        scale_label="query-passage sim."
+
         idx=0
 
         if len(accepted_points)>0:
@@ -333,6 +381,10 @@ def make_unobserved_plot(**kwargs):
                        edgecolors=colors[idx:idx+n],facecolors="none",
                        **{k:v for k,v in irel_marker_kwargs.items()
                           if k not in ["edgecolors","facecolors"]})
+
+            marker = irel_marker_kwargs.get("marker", "o")
+            for p, c in zip(accepted_points, colors[idx:idx+n]):
+                plotted_docs.append((p, marker, to_hex(c), True))
 
             for p,c,scr in zip(accepted_points,colors[idx:idx+n],scores[idx:idx+n]):
                 printable.append((scr,tuple(np.round(p,4)),to_hex(c)))
@@ -345,6 +397,10 @@ def make_unobserved_plot(**kwargs):
                        edgecolors=colors[idx:idx+n],facecolors="none",
                        **{k:v for k,v in rel_marker_kwargs.items()
                           if k not in ["edgecolors","facecolors"]})
+
+            marker = rel_marker_kwargs.get("marker", "^")
+            for p, c in zip(rel_pts, colors[idx:idx+n]):
+                plotted_docs.append((p, marker, to_hex(c), True))
 
             for p,c,scr in zip(rel_pts,colors[idx:idx+n],scores[idx:idx+n]):
                 printable.append((scr,tuple(np.round(p,4)),to_hex(c)))
@@ -372,6 +428,10 @@ def make_unobserved_plot(**kwargs):
                        **{k:v for k,v in irel_marker_kwargs.items()
                           if k not in ["edgecolors","facecolors"]})
 
+            marker = irel_marker_kwargs.get("marker", "o")
+            for p, c in zip(accepted_points, colors[idx:idx+n]):
+                plotted_docs.append((p, marker, to_hex(c), True))
+
             for p,c,scr in zip(accepted_points,colors[idx:idx+n],scores[idx:idx+n]):
                 printable.append((scr,tuple(np.round(p,4)),to_hex(c)))
 
@@ -384,38 +444,32 @@ def make_unobserved_plot(**kwargs):
                        **{k:v for k,v in rel_marker_kwargs.items()
                           if k not in ["edgecolors","facecolors"]})
 
+            marker = rel_marker_kwargs.get("marker", "^")
+            for p, c in zip(rel_pts, colors[idx:idx+n]):
+                plotted_docs.append((p, marker, to_hex(c), True))
+
             for p,c,scr in zip(rel_pts,colors[idx:idx+n],scores[idx:idx+n]):
                 printable.append((scr,tuple(np.round(p,4)),to_hex(c)))
-
-    elif color_style=="gp_cont":
-
-        if len(accepted_points)>0:
-            ax.scatter(
-                accepted_points[:,0],
-                accepted_points[:,1],
-                edgecolors="grey",
-                facecolors="none",
-                **{k:v for k,v in irel_marker_kwargs.items()
-                   if k not in ["edgecolors","facecolors"]}
-            )
-
-        if len(rel_pts)>0:
-            ax.scatter(
-                rel_pts[:,0],
-                rel_pts[:,1],
-                edgecolors="grey",
-                facecolors="none",
-                **{k:v for k,v in rel_marker_kwargs.items()
-                   if k not in ["edgecolors","facecolors"]}
-            )
 
     else:
 
         if len(accepted_points)>0:
             ax.scatter(accepted_points[:,0],accepted_points[:,1],**irel_marker_kwargs)
 
+            marker = irel_marker_kwargs.get("marker", "o")
+            default_col = _extract_marker_color(irel_marker_kwargs, default_color="grey")
+            is_hollow = _is_hollow_marker_style(irel_marker_kwargs, default_hollow=True)
+            for p in accepted_points:
+                plotted_docs.append((p, marker, default_col, is_hollow))
+
         if len(rel_pts)>0:
             ax.scatter(rel_pts[:,0],rel_pts[:,1],**rel_marker_kwargs)
+
+            marker = rel_marker_kwargs.get("marker", "^")
+            default_col = _extract_marker_color(rel_marker_kwargs, default_color="grey")
+            is_hollow = _is_hollow_marker_style(rel_marker_kwargs, default_hollow=True)
+            for p in rel_pts:
+                plotted_docs.append((p, marker, default_col, is_hollow))
 
     # ------------------------------------------------
     # OBSERVED POINTS (STYLE BY TYPE, COLOR BY LABEL)
@@ -440,6 +494,11 @@ def make_unobserved_plot(**kwargs):
 
         ax.scatter(pt[0],pt[1],c=[color],**style)
 
+        if ptype in ["irel", "rel"]:
+            marker = style.get("marker", "o" if ptype == "irel" else "^")
+            is_hollow = _is_hollow_marker_style(style, default_hollow=False)
+            plotted_docs.append((np.array(pt), marker, to_hex(color), is_hollow))
+
         printable.append((score,tuple(np.round(pt,4)),to_hex(color)))
 
     # ------------------------------------------------
@@ -460,17 +519,155 @@ def make_unobserved_plot(**kwargs):
         circle=Circle(query_loc,query_rel_circle_radius,**query_circle_kwargs)
         ax.add_patch(circle)
 
+        if show_circle_docs_in_col:
+            docs_inside_circle=[]
+            for p, marker, color, is_hollow in plotted_docs:
+                if np.linalg.norm(np.array(p)-np.array(query_loc)) <= query_rel_circle_radius:
+                    eucl_dist = _euclidean_distance(p, query_loc)
+                    docs_inside_circle.append((p, marker, color, is_hollow, eucl_dist))
+
+            docs_inside_circle.sort(key=lambda x: x[4])
+
+            if dot_col_k is not None:
+                docs_inside_circle = docs_inside_circle[:max(int(dot_col_k), 0)]
+
+            n_col = len(docs_inside_circle)
+            col_fig_w = 1.6
+            col_fig_h = max(1.8, 0.9 + max(n_col - 1, 0) * dot_col_v_space * 0.55)
+            fig_col, ax_col = plt.subplots(figsize=(col_fig_w, col_fig_h), dpi=dpi)
+            ax_col.set_xticks([])
+            ax_col.set_yticks([])
+            for spine in ax_col.spines.values():
+                spine.set_visible(False)
+
+            if len(docs_inside_circle) == 0:
+                ax_col.text(
+                    0.5,
+                    0.5,
+                    "No docs in query circle",
+                    ha="center",
+                    va="center",
+                    fontsize=fontsize,
+                    fontname=font,
+                    transform=ax_col.transAxes,
+                )
+            else:
+                ys = np.arange(len(docs_inside_circle))[::-1] * dot_col_v_space
+                xs = np.zeros(len(docs_inside_circle))
+
+                for x, y, (_, marker, color, is_hollow, _) in zip(xs, ys, docs_inside_circle):
+                    if is_hollow:
+                        ax_col.scatter(
+                            [x],
+                            [y],
+                            marker=marker,
+                            facecolors="none",
+                            edgecolors=color,
+                            s=dot_col_size,
+                        )
+                    else:
+                        ax_col.scatter(
+                            [x],
+                            [y],
+                            marker=marker,
+                            c=[color],
+                            s=dot_col_size,
+                        )
+
+                y_pad = max(0.3 * dot_col_v_space, 0.2)
+                ax_col.set_xlim(-1, 1)
+                ax_col.set_ylim(-y_pad, ys[0] + y_pad)
+
     # ------------------------------------------------
     # LEGEND
     # ------------------------------------------------
     if inc_legend:
 
-        if legend_coords is None:
-            ax.legend(prop={"family":font,"size":fontsize})
+        if color_style=="gp_contour":
+            legend_handles=[
+                Line2D([0],[0],marker="s",linestyle="None",markersize=7,
+                       markerfacecolor="grey",markeredgecolor="grey",label="Query"),
+                Line2D([0],[0],marker="o",linestyle="None",markersize=7,
+                       markerfacecolor="none",markeredgecolor="grey",label="Unobserved, Irrel."),
+                Line2D([0],[0],marker="^",linestyle="None",markersize=7,
+                       markerfacecolor="none",markeredgecolor="grey",label="Unobserved, Rel."),
+                Line2D([0],[0],marker="o",linestyle="None",markersize=7,
+                       markerfacecolor="grey",markeredgecolor="grey",label="Observed, Irrel."),
+                Line2D([0],[0],marker="^",linestyle="None",markersize=7,
+                       markerfacecolor="grey",markeredgecolor="grey",label="Observed, Rel."),
+            ]
+
+            if legend_coords is None:
+                ax.legend(handles=legend_handles,
+                          prop={"family":font,"size":fontsize},
+                          loc=legend_loc)
+            else:
+                ax.legend(handles=legend_handles,
+                          prop={"family":font,"size":fontsize},
+                          bbox_to_anchor=legend_coords,
+                          loc=legend_loc)
+
+        elif color_style=="point_color":
+            point_color_handles=[
+                Line2D([0],[0],marker="o",linestyle="None",markersize=7,
+                       markerfacecolor="none",markeredgecolor="grey",label="Irrel."),
+                Line2D([0],[0],marker="^",linestyle="None",markersize=7,
+                       markerfacecolor="none",markeredgecolor="grey",label="Rel."),
+                Line2D([0],[0],marker="s",linestyle="None",markersize=7,
+                       markerfacecolor="none",markeredgecolor="grey",label="Query"),
+            ]
+
+            if legend_coords is None:
+                ax.legend(handles=point_color_handles,
+                          prop={"family":font,"size":fontsize},
+                          loc=legend_loc)
+            else:
+                ax.legend(handles=point_color_handles,
+                          prop={"family":font,"size":fontsize},
+                          bbox_to_anchor=legend_coords,
+                          loc=legend_loc)
+
         else:
-            ax.legend(prop={"family":font,"size":fontsize},
-                      bbox_to_anchor=legend_coords,
-                      loc="upper left")
+            generic_handles=[
+                Line2D([0],[0],marker=query_marker_kwargs.get("marker","x"),linestyle="None",markersize=7,
+                       markerfacecolor="grey",markeredgecolor="grey",label="Query"),
+                Line2D([0],[0],marker=irel_marker_kwargs.get("marker","o"),linestyle="None",markersize=7,
+                       markerfacecolor="none",markeredgecolor="grey",label="Unobserved, Irrel."),
+                Line2D([0],[0],marker=rel_marker_kwargs.get("marker","^"),linestyle="None",markersize=7,
+                       markerfacecolor="none",markeredgecolor="grey",label="Unobserved, Rel."),
+                Line2D([0],[0],marker=obs_irel_marker_kwargs.get("marker","o"),linestyle="None",markersize=7,
+                       markerfacecolor="grey",markeredgecolor="grey",label="Observed, Irrel."),
+                Line2D([0],[0],marker=obs_rel_marker_kwargs.get("marker","^"),linestyle="None",markersize=7,
+                       markerfacecolor="grey",markeredgecolor="grey",label="Observed, Rel."),
+            ]
+
+            if legend_coords is None:
+                ax.legend(handles=generic_handles,
+                          prop={"family":font,"size":fontsize},
+                          loc=legend_loc)
+            else:
+                ax.legend(handles=generic_handles,
+                          prop={"family":font,"size":fontsize},
+                          bbox_to_anchor=legend_coords,
+                          loc=legend_loc)
+
+    # ------------------------------------------------
+    # SCALE / COLORBAR
+    # ------------------------------------------------
+    if inc_scale and (scale_mappable is not None):
+        if scale_coords is None:
+            cbar=fig.colorbar(scale_mappable,
+                              ax=ax,
+                              orientation=scale_orientation,
+                              location=scale_loc)
+        else:
+            cax = fig.add_axes(scale_coords)
+            cbar=fig.colorbar(scale_mappable,
+                              cax=cax,
+                              orientation=scale_orientation)
+
+        if scale_label is not None:
+            cbar.set_label(scale_label, fontname=font, fontsize=fontsize)
 
     if show_fig:
         plt.show()
