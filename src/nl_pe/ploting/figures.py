@@ -743,26 +743,16 @@ def make_unobserved_plot(**kwargs):
         elif color_style == 'point_color':    
             query_legend_face = "none"
 
-        legend_handles=[
-            Line2D([0],[0],marker=irel_marker_kwargs.get("marker","o"),linestyle="None",markersize=7,
-                   markerfacecolor="none",markeredgecolor="grey",label=irel_marker_kwargs.get("label","Unobserved, Irrel.")),
-            Line2D([0],[0],marker=rel_marker_kwargs.get("marker","^"),linestyle="None",markersize=7,
-                   markerfacecolor="none",markeredgecolor="grey",label=rel_marker_kwargs.get("label","Unobserved, Rel.")),
-        ]
+        legend_handles=[]
 
-        if color_style in ["gp_points", "gp_contour"]:
-            legend_handles.extend([
-                Line2D([0],[0],marker=obs_doc_marker_kwargs.get("marker","D"),linestyle="None",markersize=8,
-                       markerfacecolor="grey",markeredgecolor=obs_doc_marker_kwargs.get("edgecolors","black"),
-                       markeredgewidth=obs_doc_marker_kwargs.get("linewidths",1.5),label=obs_doc_marker_kwargs.get("label","Observed Doc")),
-            ])
-
+        # 1) Query first
         legend_handles.append(
             Line2D([0],[0],marker=query_legend_marker,linestyle="None",markersize=7,
                    markerfacecolor=query_legend_face,markeredgecolor=query_legend_edge,
                    markeredgewidth=query_legend_lw,label=query_legend_label)
         )
 
+        # 2) Acquisition function selection
         if len(af_locs) > 0:
             af_face = af_marker_kwargs.get(
                 "facecolors",
@@ -788,6 +778,26 @@ def make_unobserved_plot(**kwargs):
                     label=af_marker_kwargs.get("label","Acq. Func. Selection"),
                 )
             )
+
+        # 3) Observed docs
+        if color_style in ["gp_points", "gp_contour"]:
+            legend_handles.append(
+                Line2D([0],[0],marker=obs_doc_marker_kwargs.get("marker","D"),linestyle="None",markersize=8,
+                       markerfacecolor="grey",markeredgecolor=obs_doc_marker_kwargs.get("edgecolors","black"),
+                       markeredgewidth=obs_doc_marker_kwargs.get("linewidths",1.5),label=obs_doc_marker_kwargs.get("label","Observed Doc"))
+            )
+
+        # 4) Unobserved relevant docs
+        legend_handles.append(
+            Line2D([0],[0],marker=rel_marker_kwargs.get("marker","^"),linestyle="None",markersize=7,
+                   markerfacecolor="none",markeredgecolor="grey",label=rel_marker_kwargs.get("label","Unobserved, Rel."))
+        )
+
+        # 5) Unobserved irrelevant docs
+        legend_handles.append(
+            Line2D([0],[0],marker=irel_marker_kwargs.get("marker","o"),linestyle="None",markersize=7,
+                   markerfacecolor="none",markeredgecolor="grey",label=irel_marker_kwargs.get("label","Unobserved, Irrel."))
+        )
 
         if legend_coords is None:
             ax.legend(handles=legend_handles,
