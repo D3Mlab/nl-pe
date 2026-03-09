@@ -105,6 +105,7 @@ def make_unobserved_plot(**kwargs):
     query_loc = kwargs.get("query_loc",None)
     query_rel_circle_radius = kwargs.get("query_rel_circle_radius",None)
     extra_unobserved_irel_locs = kwargs.get("extra_unobserved_irel_locs", [])
+    af_locs = kwargs.get("af_locs", [])
 
     observed_points = list(kwargs.get("observed_points",[]))
     irrel_observed_locs = kwargs.get("irrel_observed_locs", [])
@@ -114,7 +115,7 @@ def make_unobserved_plot(**kwargs):
 
     if len(irrel_observed_locs) > 0:
         observed_points.extend([
-            (tuple(pt), float(irrel_observed_value), "irel")
+            (tuple(pt), float(irrel_observed_value), "doc")
             for pt in irrel_observed_locs
         ])
 
@@ -132,9 +133,9 @@ def make_unobserved_plot(**kwargs):
     default_rel_marker=dict(marker="^",facecolors="none",edgecolors="grey",s=30,linewidths=1.2,label="Rel. docs")
     default_query_marker=dict(marker="x",color="black",s=30,linewidths=1.5,label="Query")
 
-    default_obs_irel=dict(marker="o",s=40,linewidths=1.2,edgecolors="black",label="Obs Irel")
-    default_obs_rel=dict(marker="^",s=40,linewidths=1.2,edgecolors="black",label="Obs Rel")
+    default_obs_doc=dict(marker="D",s=40,linewidths=1.5,edgecolors="black",label="Observed Doc")
     default_obs_query=dict(marker="s",s=40,linewidths=1.2,edgecolors="black",label="Query")
+    default_af_marker=dict(marker="*",s=60,color="red",edgecolors="black",linewidths=2,label="Acq. Func. Selection")
 
     default_circle=dict(edgecolor="grey",linestyle="--",linewidth=1.2,fill=False)
 
@@ -142,9 +143,9 @@ def make_unobserved_plot(**kwargs):
     rel_marker_kwargs={**default_rel_marker,**kwargs.get("rel_marker_kwargs",{})}
     query_marker_kwargs={**default_query_marker,**kwargs.get("query_marker_kwargs",{})}
 
-    obs_irel_marker_kwargs={**default_obs_irel,**kwargs.get("obs_irel_marker_kwargs",{})}
-    obs_rel_marker_kwargs={**default_obs_rel,**kwargs.get("obs_rel_marker_kwargs",{})}
+    obs_doc_marker_kwargs={**default_obs_doc,**kwargs.get("obs_doc_marker_kwargs",{})}
     obs_query_marker_kwargs={**default_obs_query,**kwargs.get("obs_query_marker_kwargs",{})}
+    af_marker_kwargs={**default_af_marker,**kwargs.get("af_marker_kwargs",{})}
 
     query_circle_kwargs={**default_circle,**kwargs.get("query_rel_circle_kwargs",{})}
 
@@ -483,7 +484,7 @@ def make_unobserved_plot(**kwargs):
                 accepted_points,
                 colors[idx:idx+n],
                 irel_marker_kwargs,
-                obs_irel_marker_kwargs,
+                obs_doc_marker_kwargs,
                 "o",
             )
 
@@ -498,7 +499,7 @@ def make_unobserved_plot(**kwargs):
                 rel_pts,
                 colors[idx:idx+n],
                 rel_marker_kwargs,
-                obs_rel_marker_kwargs,
+                obs_doc_marker_kwargs,
                 "^",
             )
 
@@ -527,7 +528,7 @@ def make_unobserved_plot(**kwargs):
                 accepted_points,
                 colors[idx:idx+n],
                 irel_marker_kwargs,
-                obs_irel_marker_kwargs,
+                obs_doc_marker_kwargs,
                 "o",
             )
 
@@ -542,7 +543,7 @@ def make_unobserved_plot(**kwargs):
                 rel_pts,
                 colors[idx:idx+n],
                 rel_marker_kwargs,
-                obs_rel_marker_kwargs,
+                obs_doc_marker_kwargs,
                 "^",
             )
 
@@ -580,14 +581,12 @@ def make_unobserved_plot(**kwargs):
             score=np.clip(val,0,max_rel)/max_rel
         color=cmap(score)
 
-        if ptype=="irel":
-            style=obs_irel_marker_kwargs
-        elif ptype=="rel":
-            style=obs_rel_marker_kwargs
-        elif ptype=="query":
+        if ptype=="query":
             style=obs_query_marker_kwargs
+        elif ptype=="doc":
+            style=obs_doc_marker_kwargs
         else:
-            raise ValueError("ptype must be 'irel','rel','query'")
+            raise ValueError("ptype must be 'query' or 'doc'")
 
         style=dict(style)
         style.pop("color",None)
@@ -595,8 +594,8 @@ def make_unobserved_plot(**kwargs):
 
         ax.scatter(pt[0],pt[1],c=[color],**style)
 
-        if ptype in ["irel", "rel"]:
-            marker = style.get("marker", "o" if ptype == "irel" else "^")
+        if ptype == "doc":
+            marker = style.get("marker", "D")
             is_hollow = _is_hollow_marker_style(style, default_hollow=False)
             plotted_docs.append((np.array(pt), marker, to_hex(color), is_hollow))
 
@@ -710,6 +709,15 @@ def make_unobserved_plot(**kwargs):
                 ax_col.set_ylim(-y_pad, ys[0] + y_pad)
 
     # ------------------------------------------------
+    # ACQUISITION FUNCTION POINTS (VISUAL ONLY)
+    # ------------------------------------------------
+    if len(af_locs) > 0:
+        af_pts = np.array(af_locs, dtype=float).reshape(-1, 2)
+        style = dict(af_marker_kwargs)
+        for x, y in af_pts:
+            ax.scatter(x, y, **style)
+
+    # ------------------------------------------------
     # LEGEND
     # ------------------------------------------------
     if inc_legend:
@@ -729,7 +737,11 @@ def make_unobserved_plot(**kwargs):
                 query_marker_kwargs.get("linewidths", query_marker_kwargs.get("linewidth", 1.5)),
             ),
         )
-        query_legend_face = "none"
+        
+        if color_style == 'gp_contour':
+            query_legend_face = "grey"
+        elif color_style == 'point_color':    
+            query_legend_face = "none"
 
         legend_handles=[
             Line2D([0],[0],marker=irel_marker_kwargs.get("marker","o"),linestyle="None",markersize=7,
@@ -740,12 +752,9 @@ def make_unobserved_plot(**kwargs):
 
         if color_style in ["gp_points", "gp_contour"]:
             legend_handles.extend([
-                Line2D([0],[0],marker=obs_irel_marker_kwargs.get("marker","o"),linestyle="None",markersize=7,
-                       markerfacecolor="grey",markeredgecolor=obs_irel_marker_kwargs.get("edgecolors","black"),
-                       markeredgewidth=obs_irel_marker_kwargs.get("linewidths",1.2),label=obs_irel_marker_kwargs.get("label","Observed, Irrel.")),
-                Line2D([0],[0],marker=obs_rel_marker_kwargs.get("marker","^"),linestyle="None",markersize=7,
-                       markerfacecolor="grey",markeredgecolor=obs_rel_marker_kwargs.get("edgecolors","black"),
-                       markeredgewidth=obs_rel_marker_kwargs.get("linewidths",1.2),label=obs_rel_marker_kwargs.get("label","Observed, Rel.")),
+                Line2D([0],[0],marker=obs_doc_marker_kwargs.get("marker","D"),linestyle="None",markersize=8,
+                       markerfacecolor="grey",markeredgecolor=obs_doc_marker_kwargs.get("edgecolors","black"),
+                       markeredgewidth=obs_doc_marker_kwargs.get("linewidths",1.5),label=obs_doc_marker_kwargs.get("label","Observed Doc")),
             ])
 
         legend_handles.append(
@@ -753,6 +762,32 @@ def make_unobserved_plot(**kwargs):
                    markerfacecolor=query_legend_face,markeredgecolor=query_legend_edge,
                    markeredgewidth=query_legend_lw,label=query_legend_label)
         )
+
+        if len(af_locs) > 0:
+            af_face = af_marker_kwargs.get(
+                "facecolors",
+                af_marker_kwargs.get(
+                    "facecolor",
+                    af_marker_kwargs.get(
+                        "c",
+                        af_marker_kwargs.get("color", "red"),
+                    ),
+                ),
+            )
+            if isinstance(af_face, (list, tuple, np.ndarray)) and len(af_face) > 0:
+                af_face = af_face[0]
+            legend_handles.append(
+                Line2D(
+                    [0],[0],
+                    marker=af_marker_kwargs.get("marker","*"),
+                    linestyle="None",
+                    markersize=10,
+                    markerfacecolor=af_face,
+                    markeredgecolor=af_marker_kwargs.get("edgecolors","black"),
+                    markeredgewidth=af_marker_kwargs.get("linewidths",2),
+                    label=af_marker_kwargs.get("label","Acq. Func. Selection"),
+                )
+            )
 
         if legend_coords is None:
             ax.legend(handles=legend_handles,
