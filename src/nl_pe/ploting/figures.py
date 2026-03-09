@@ -78,6 +78,15 @@ def make_unobserved_plot(**kwargs):
     dot_col_v_space = kwargs.get("dot_col_v_space", 1.0)
     dot_col_size = kwargs.get("dot_col_size", 30)
     dot_col_k = kwargs.get("dot_col_k", None)
+    color_points_inside_query_circle = kwargs.get("color_points_inside_query_circle", True)
+    top_k_point_border = kwargs.get("top_k_point_border", {"edgecolors": "black", "linewidths": 1.0})
+    color_query_with_heatmap = kwargs.get("color_query_with_heatmap", True)
+    # backward-compat alias
+    shade_points_in_query_circle = kwargs.get("shade_points_in_query_circle", None)
+    if shade_points_in_query_circle is not None:
+        color_points_inside_query_circle = bool(shade_points_in_query_circle)
+
+    query_border_kwargs = kwargs.get("query_border_kwargs", {})
 
     print_points = kwargs.get("print_points",False)
 
@@ -95,10 +104,19 @@ def make_unobserved_plot(**kwargs):
 
     query_loc = kwargs.get("query_loc",None)
     query_rel_circle_radius = kwargs.get("query_rel_circle_radius",None)
+    extra_unobserved_irel_locs = kwargs.get("extra_unobserved_irel_locs", [])
 
-    observed_points = kwargs.get("observed_points",[])
+    observed_points = list(kwargs.get("observed_points",[]))
+    irrel_observed_locs = kwargs.get("irrel_observed_locs", [])
+    irrel_observed_value = kwargs.get("irrel_observed_value", 0.0)
 
     max_rel = kwargs.get("max_rel",1)
+
+    if len(irrel_observed_locs) > 0:
+        observed_points.extend([
+            (tuple(pt), float(irrel_observed_value), "irel")
+            for pt in irrel_observed_locs
+        ])
 
     # ------------------------------------------------
     # GP PARAMETERS
@@ -116,7 +134,7 @@ def make_unobserved_plot(**kwargs):
 
     default_obs_irel=dict(marker="o",s=40,linewidths=1.2,edgecolors="black",label="Obs Irel")
     default_obs_rel=dict(marker="^",s=40,linewidths=1.2,edgecolors="black",label="Obs Rel")
-    default_obs_query=dict(marker="s",s=40,linewidths=1.2,edgecolors="black",label="Obs Query")
+    default_obs_query=dict(marker="s",s=40,linewidths=1.2,edgecolors="black",label="Query")
 
     default_circle=dict(edgecolor="grey",linestyle="--",linewidth=1.2,fill=False)
 
@@ -295,7 +313,17 @@ def make_unobserved_plot(**kwargs):
                 accepted_points.append(candidate)
                 count+=1
 
-    accepted_points=np.array(accepted_points)
+    if len(accepted_points) > 0:
+        accepted_points=np.array(accepted_points, dtype=float).reshape(-1,2)
+    else:
+        accepted_points=np.empty((0,2), dtype=float)
+
+    if len(extra_unobserved_irel_locs) > 0:
+        accepted_points = np.vstack([
+            accepted_points,
+            np.array(extra_unobserved_irel_locs, dtype=float).reshape(-1,2)
+        ])
+
     rel_pts=np.array(rel_unobserved_locs) if len(rel_unobserved_locs)>0 else np.empty((0,2))
 
     printable=[]
@@ -357,6 +385,80 @@ def make_unobserved_plot(**kwargs):
         b = np.array(b, dtype=float)
         return float(np.linalg.norm(a - b))
 
+    def _plot_colored_doc_points(points, colors, unobs_style, obs_style, default_marker):
+        if len(points) == 0:
+            return
+
+        pts = np.array(points)
+        inside_mask = np.zeros(len(pts), dtype=bool)
+
+        if (
+            color_points_inside_query_circle
+            and query_loc is not None
+            and query_rel_circle_radius is not None
+        ):
+            inside_mask = (
+                np.linalg.norm(pts - np.array(query_loc), axis=1)
+                <= query_rel_circle_radius
+            )
+
+        outside_mask = ~inside_mask
+
+        if np.any(outside_mask):
+            outside_pts = pts[outside_mask]
+            outside_cols = colors[outside_mask]
+            style = dict(unobs_style)
+            style.pop("color", None)
+            style.pop("c", None)
+            style.pop("facecolors", None)
+            style.pop("facecolor", None)
+            style.pop("edgecolors", None)
+            style.pop("edgecolor", None)
+
+            ax.scatter(
+                outside_pts[:, 0],
+                outside_pts[:, 1],
+                facecolors="none",
+                edgecolors=outside_cols,
+                **style,
+            )
+
+            marker = unobs_style.get("marker", default_marker)
+            for p, c in zip(outside_pts, outside_cols):
+                plotted_docs.append((p, marker, to_hex(c), True))
+
+        if np.any(inside_mask):
+            inside_pts = pts[inside_mask]
+            inside_cols = colors[inside_mask]
+            style = dict(unobs_style)
+            style.pop("color", None)
+            style.pop("c", None)
+            style.pop("facecolors", None)
+            style.pop("facecolor", None)
+            style.pop("edgecolors", None)
+            style.pop("edgecolor", None)
+            style.pop("linewidths", None)
+            style.pop("linewidth", None)
+
+            border_style = dict(top_k_point_border) if isinstance(top_k_point_border, dict) else {}
+            if top_k_point_border in [None, False, "none"]:
+                border_style = {"edgecolors": "none", "linewidths": 0.0}
+            edge_col = border_style.get("edgecolors", border_style.get("edgecolor", "black"))
+            lw = border_style.get("linewidths", border_style.get("linewidth", 1.0))
+
+            ax.scatter(
+                inside_pts[:, 0],
+                inside_pts[:, 1],
+                facecolors=inside_cols,
+                edgecolors=edge_col,
+                linewidths=lw,
+                **style,
+            )
+
+            marker = unobs_style.get("marker", default_marker)
+            for p, c in zip(inside_pts, inside_cols):
+                plotted_docs.append((p, marker, to_hex(c), False))
+
     # ------------------------------------------------
     # POINT COLOR MODES
     # ------------------------------------------------
@@ -377,14 +479,13 @@ def make_unobserved_plot(**kwargs):
 
         if len(accepted_points)>0:
             n=len(accepted_points)
-            ax.scatter(accepted_points[:,0],accepted_points[:,1],
-                       edgecolors=colors[idx:idx+n],facecolors="none",
-                       **{k:v for k,v in irel_marker_kwargs.items()
-                          if k not in ["edgecolors","facecolors"]})
-
-            marker = irel_marker_kwargs.get("marker", "o")
-            for p, c in zip(accepted_points, colors[idx:idx+n]):
-                plotted_docs.append((p, marker, to_hex(c), True))
+            _plot_colored_doc_points(
+                accepted_points,
+                colors[idx:idx+n],
+                irel_marker_kwargs,
+                obs_irel_marker_kwargs,
+                "o",
+            )
 
             for p,c,scr in zip(accepted_points,colors[idx:idx+n],scores[idx:idx+n]):
                 printable.append((scr,tuple(np.round(p,4)),to_hex(c)))
@@ -393,14 +494,13 @@ def make_unobserved_plot(**kwargs):
 
         if len(rel_pts)>0:
             n=len(rel_pts)
-            ax.scatter(rel_pts[:,0],rel_pts[:,1],
-                       edgecolors=colors[idx:idx+n],facecolors="none",
-                       **{k:v for k,v in rel_marker_kwargs.items()
-                          if k not in ["edgecolors","facecolors"]})
-
-            marker = rel_marker_kwargs.get("marker", "^")
-            for p, c in zip(rel_pts, colors[idx:idx+n]):
-                plotted_docs.append((p, marker, to_hex(c), True))
+            _plot_colored_doc_points(
+                rel_pts,
+                colors[idx:idx+n],
+                rel_marker_kwargs,
+                obs_rel_marker_kwargs,
+                "^",
+            )
 
             for p,c,scr in zip(rel_pts,colors[idx:idx+n],scores[idx:idx+n]):
                 printable.append((scr,tuple(np.round(p,4)),to_hex(c)))
@@ -423,14 +523,13 @@ def make_unobserved_plot(**kwargs):
 
         if len(accepted_points)>0:
             n=len(accepted_points)
-            ax.scatter(accepted_points[:,0],accepted_points[:,1],
-                       edgecolors=colors[idx:idx+n],facecolors="none",
-                       **{k:v for k,v in irel_marker_kwargs.items()
-                          if k not in ["edgecolors","facecolors"]})
-
-            marker = irel_marker_kwargs.get("marker", "o")
-            for p, c in zip(accepted_points, colors[idx:idx+n]):
-                plotted_docs.append((p, marker, to_hex(c), True))
+            _plot_colored_doc_points(
+                accepted_points,
+                colors[idx:idx+n],
+                irel_marker_kwargs,
+                obs_irel_marker_kwargs,
+                "o",
+            )
 
             for p,c,scr in zip(accepted_points,colors[idx:idx+n],scores[idx:idx+n]):
                 printable.append((scr,tuple(np.round(p,4)),to_hex(c)))
@@ -439,14 +538,13 @@ def make_unobserved_plot(**kwargs):
 
         if len(rel_pts)>0:
             n=len(rel_pts)
-            ax.scatter(rel_pts[:,0],rel_pts[:,1],
-                       edgecolors=colors[idx:idx+n],facecolors="none",
-                       **{k:v for k,v in rel_marker_kwargs.items()
-                          if k not in ["edgecolors","facecolors"]})
-
-            marker = rel_marker_kwargs.get("marker", "^")
-            for p, c in zip(rel_pts, colors[idx:idx+n]):
-                plotted_docs.append((p, marker, to_hex(c), True))
+            _plot_colored_doc_points(
+                rel_pts,
+                colors[idx:idx+n],
+                rel_marker_kwargs,
+                obs_rel_marker_kwargs,
+                "^",
+            )
 
             for p,c,scr in zip(rel_pts,colors[idx:idx+n],scores[idx:idx+n]):
                 printable.append((scr,tuple(np.round(p,4)),to_hex(c)))
@@ -476,7 +574,10 @@ def make_unobserved_plot(**kwargs):
     # ------------------------------------------------
     for (pt,val,ptype) in observed_points:
 
-        score=np.clip(val,0,max_rel)/max_rel
+        if ptype == "query" and color_style in ["continuous_color", "point_color", "gp_points", "gp_contour"]:
+            score = 1.0
+        else:
+            score=np.clip(val,0,max_rel)/max_rel
         color=cmap(score)
 
         if ptype=="irel":
@@ -513,19 +614,49 @@ def make_unobserved_plot(**kwargs):
     # QUERY
     # ------------------------------------------------
     if query_loc is not None:
-        ax.scatter([query_loc[0]],[query_loc[1]],**query_marker_kwargs)
+        query_style = dict(query_marker_kwargs)
+        q_border = dict(query_border_kwargs)
+        q_edge = q_border.get("edgecolors", q_border.get("edgecolor", query_style.get("edgecolors", query_style.get("edgecolor", "black"))))
+        q_lw = q_border.get("linewidths", q_border.get("linewidth", query_style.get("linewidths", query_style.get("linewidth", 1.5))))
+
+        if color_style in ["continuous_color", "point_color", "gp_points", "gp_contour"] and color_query_with_heatmap:
+            query_style.pop("color", None)
+            query_style.pop("c", None)
+            query_style.pop("facecolors", None)
+            query_style.pop("facecolor", None)
+            query_style.pop("edgecolors", None)
+            query_style.pop("edgecolor", None)
+            query_style.pop("linewidths", None)
+            query_style.pop("linewidth", None)
+            ax.scatter(
+                [query_loc[0]],
+                [query_loc[1]],
+                facecolors=[cmap(1.0)],
+                edgecolors=q_edge,
+                linewidths=q_lw,
+                **query_style,
+            )
+        else:
+            if len(q_border) > 0:
+                query_style.pop("edgecolors", None)
+                query_style.pop("edgecolor", None)
+                query_style.pop("linewidths", None)
+                query_style.pop("linewidth", None)
+                query_style["edgecolors"] = q_edge
+                query_style["linewidths"] = q_lw
+            ax.scatter([query_loc[0]],[query_loc[1]],**query_style)
 
     if query_loc is not None and query_rel_circle_radius is not None:
         circle=Circle(query_loc,query_rel_circle_radius,**query_circle_kwargs)
         ax.add_patch(circle)
 
-        if show_circle_docs_in_col:
-            docs_inside_circle=[]
-            for p, marker, color, is_hollow in plotted_docs:
-                if np.linalg.norm(np.array(p)-np.array(query_loc)) <= query_rel_circle_radius:
-                    eucl_dist = _euclidean_distance(p, query_loc)
-                    docs_inside_circle.append((p, marker, color, is_hollow, eucl_dist))
+        docs_inside_circle=[]
+        for p, marker, color, is_hollow in plotted_docs:
+            if np.linalg.norm(np.array(p)-np.array(query_loc)) <= query_rel_circle_radius:
+                eucl_dist = _euclidean_distance(p, query_loc)
+                docs_inside_circle.append((p, marker, color, is_hollow, eucl_dist))
 
+        if show_circle_docs_in_col:
             docs_inside_circle.sort(key=lambda x: x[4])
 
             if dot_col_k is not None:
@@ -582,74 +713,56 @@ def make_unobserved_plot(**kwargs):
     # LEGEND
     # ------------------------------------------------
     if inc_legend:
+        query_legend_label = query_marker_kwargs.get("label", "Query")
+        query_legend_marker = query_marker_kwargs.get("marker", "s")
+        query_legend_edge = query_border_kwargs.get(
+            "edgecolors",
+            query_border_kwargs.get(
+                "edgecolor",
+                query_marker_kwargs.get("edgecolors", query_marker_kwargs.get("edgecolor", "black")),
+            ),
+        )
+        query_legend_lw = query_border_kwargs.get(
+            "linewidths",
+            query_border_kwargs.get(
+                "linewidth",
+                query_marker_kwargs.get("linewidths", query_marker_kwargs.get("linewidth", 1.5)),
+            ),
+        )
+        query_legend_face = "none"
 
-        if color_style=="gp_contour":
-            legend_handles=[
-                Line2D([0],[0],marker="s",linestyle="None",markersize=7,
-                       markerfacecolor="grey",markeredgecolor="grey",label="Query"),
-                Line2D([0],[0],marker="o",linestyle="None",markersize=7,
-                       markerfacecolor="none",markeredgecolor="grey",label="Unobserved, Irrel."),
-                Line2D([0],[0],marker="^",linestyle="None",markersize=7,
-                       markerfacecolor="none",markeredgecolor="grey",label="Unobserved, Rel."),
-                Line2D([0],[0],marker="o",linestyle="None",markersize=7,
-                       markerfacecolor="grey",markeredgecolor="grey",label="Observed, Irrel."),
-                Line2D([0],[0],marker="^",linestyle="None",markersize=7,
-                       markerfacecolor="grey",markeredgecolor="grey",label="Observed, Rel."),
-            ]
+        legend_handles=[
+            Line2D([0],[0],marker=irel_marker_kwargs.get("marker","o"),linestyle="None",markersize=7,
+                   markerfacecolor="none",markeredgecolor="grey",label=irel_marker_kwargs.get("label","Unobserved, Irrel.")),
+            Line2D([0],[0],marker=rel_marker_kwargs.get("marker","^"),linestyle="None",markersize=7,
+                   markerfacecolor="none",markeredgecolor="grey",label=rel_marker_kwargs.get("label","Unobserved, Rel.")),
+        ]
 
-            if legend_coords is None:
-                ax.legend(handles=legend_handles,
-                          prop={"family":font,"size":fontsize},
-                          loc=legend_loc)
-            else:
-                ax.legend(handles=legend_handles,
-                          prop={"family":font,"size":fontsize},
-                          bbox_to_anchor=legend_coords,
-                          loc=legend_loc)
-
-        elif color_style=="point_color":
-            point_color_handles=[
-                Line2D([0],[0],marker="o",linestyle="None",markersize=7,
-                       markerfacecolor="none",markeredgecolor="grey",label="Irrel."),
-                Line2D([0],[0],marker="^",linestyle="None",markersize=7,
-                       markerfacecolor="none",markeredgecolor="grey",label="Rel."),
-                Line2D([0],[0],marker="s",linestyle="None",markersize=7,
-                       markerfacecolor="none",markeredgecolor="grey",label="Query"),
-            ]
-
-            if legend_coords is None:
-                ax.legend(handles=point_color_handles,
-                          prop={"family":font,"size":fontsize},
-                          loc=legend_loc)
-            else:
-                ax.legend(handles=point_color_handles,
-                          prop={"family":font,"size":fontsize},
-                          bbox_to_anchor=legend_coords,
-                          loc=legend_loc)
-
-        else:
-            generic_handles=[
-                Line2D([0],[0],marker=query_marker_kwargs.get("marker","x"),linestyle="None",markersize=7,
-                       markerfacecolor="grey",markeredgecolor="grey",label="Query"),
-                Line2D([0],[0],marker=irel_marker_kwargs.get("marker","o"),linestyle="None",markersize=7,
-                       markerfacecolor="none",markeredgecolor="grey",label="Unobserved, Irrel."),
-                Line2D([0],[0],marker=rel_marker_kwargs.get("marker","^"),linestyle="None",markersize=7,
-                       markerfacecolor="none",markeredgecolor="grey",label="Unobserved, Rel."),
+        if color_style in ["gp_points", "gp_contour"]:
+            legend_handles.extend([
                 Line2D([0],[0],marker=obs_irel_marker_kwargs.get("marker","o"),linestyle="None",markersize=7,
-                       markerfacecolor="grey",markeredgecolor="grey",label="Observed, Irrel."),
+                       markerfacecolor="grey",markeredgecolor=obs_irel_marker_kwargs.get("edgecolors","black"),
+                       markeredgewidth=obs_irel_marker_kwargs.get("linewidths",1.2),label=obs_irel_marker_kwargs.get("label","Observed, Irrel.")),
                 Line2D([0],[0],marker=obs_rel_marker_kwargs.get("marker","^"),linestyle="None",markersize=7,
-                       markerfacecolor="grey",markeredgecolor="grey",label="Observed, Rel."),
-            ]
+                       markerfacecolor="grey",markeredgecolor=obs_rel_marker_kwargs.get("edgecolors","black"),
+                       markeredgewidth=obs_rel_marker_kwargs.get("linewidths",1.2),label=obs_rel_marker_kwargs.get("label","Observed, Rel.")),
+            ])
 
-            if legend_coords is None:
-                ax.legend(handles=generic_handles,
-                          prop={"family":font,"size":fontsize},
-                          loc=legend_loc)
-            else:
-                ax.legend(handles=generic_handles,
-                          prop={"family":font,"size":fontsize},
-                          bbox_to_anchor=legend_coords,
-                          loc=legend_loc)
+        legend_handles.append(
+            Line2D([0],[0],marker=query_legend_marker,linestyle="None",markersize=7,
+                   markerfacecolor=query_legend_face,markeredgecolor=query_legend_edge,
+                   markeredgewidth=query_legend_lw,label=query_legend_label)
+        )
+
+        if legend_coords is None:
+            ax.legend(handles=legend_handles,
+                      prop={"family":font,"size":fontsize},
+                      loc=legend_loc)
+        else:
+            ax.legend(handles=legend_handles,
+                      prop={"family":font,"size":fontsize},
+                      bbox_to_anchor=legend_coords,
+                      loc=legend_loc)
 
     # ------------------------------------------------
     # SCALE / COLORBAR
