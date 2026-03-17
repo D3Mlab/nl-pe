@@ -1,6 +1,6 @@
-# NL-PE
+# ReBOL
 
-NL-PE is a research codebase for information retrieval experiments built around modular retrieval pipelines, query reformulation, LLM-based reranking, and Gaussian-process-guided retrieval. The repository is organized so that most experimental variation is expressed through configuration files rather than custom experiment scripts.
+ReBOL is a research codebase for information retrieval experiments built around modular retrieval pipelines, query reformulation, LLM-based reranking, and Gaussian-process-guided retrieval. The repository is organized so that most experimental variation is expressed through configuration files rather than custom experiment scripts.
 
 ## Repository Structure
 
