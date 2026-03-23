@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from matplotlib.lines import Line2D
+from matplotlib.patches import Rectangle
 
 
 def _normalize_metric_name(metric):
@@ -128,7 +129,8 @@ def _get_trec_baseline_legend_handles(baseline_points):
     return handles
 
 def plot_trec_metrics_vs_k(step_size, k, metrics, method_paths, method_names,
-                 line_styles=None, y_mins=None, y_maxs=None, title=None, dataset = '', baselines=None, legend_coords=None):
+                 line_styles=None, y_mins=None, y_maxs=None, title="", dataset = '', baselines=None,
+                 legend_coords=None, axis_text_size=18, leg_text_size=16):
     if k % step_size != 0:
         print('k must be divisible by step size')
         return
@@ -144,7 +146,22 @@ def plot_trec_metrics_vs_k(step_size, k, metrics, method_paths, method_names,
     num_metrics = len(metrics)
     baseline_points = _extract_trec_baselines_for_dataset(baselines, dataset)
 
-    fig, axes = plt.subplots(num_metrics, 1, figsize=(12, 6 * num_metrics))
+    fig, axes = plt.subplots(num_metrics, 1, figsize=(12, 10 * num_metrics))
+    fig.patch.set_facecolor("white")
+    # Force full-figure extents to be respected in notebook inline rendering,
+    # where tight cropping can otherwise remove outer white margins.
+    fig.add_artist(
+        Rectangle(
+            (0, 0),
+            1,
+            1,
+            transform=fig.transFigure,
+            facecolor="white",
+            edgecolor="none",
+            zorder=-100,
+        )
+    )
+
     if num_metrics == 1:
         axes = [axes]  # make iterable for single metric
 
@@ -169,9 +186,11 @@ def plot_trec_metrics_vs_k(step_size, k, metrics, method_paths, method_names,
         else:
             ax.set_ylim(0, 1)
             
-        ax.set_xlabel('K')
-        ax.set_ylabel(f'{metric}@k')
-        ax.set_title(f'{metric.upper()}@K')
+        ax.set_xlabel('K', fontsize=axis_text_size)
+        ax.set_ylabel(f'{metric}@k', fontsize=axis_text_size)
+        # Keep subplot titles empty unless explicitly needed elsewhere.
+        ax.set_title("")
+        ax.tick_params(axis='both', labelsize=axis_text_size)
         ax.grid(True)
         
         if i == 0:
@@ -185,11 +204,16 @@ def plot_trec_metrics_vs_k(step_size, k, metrics, method_paths, method_names,
             ax.legend(
                 handles + baseline_handles,
                 labels + [h.get_label() for h in baseline_handles],
+                fontsize=leg_text_size,
                 **legend_kwargs,
             )
 
-    plt.suptitle(title, fontsize=16)
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    if title:
+        plt.suptitle(title, fontsize=axis_text_size)
+
+    # Add visible outer white padding around all sides of the figure.
+    # Using 15% here makes margins clearly visible across notebook backends.
+    fig.subplots_adjust(left=0.125, right=1, bottom=0.15, top=0.85)
 
     if title and method_paths:
         save_path = os.path.join("plots", f"{title}.png")
@@ -248,6 +272,9 @@ def get_runtimes(method_path):
 
     runtimes = np.array(runtimes)
     return runtimes
+
+
+
 
 
 
