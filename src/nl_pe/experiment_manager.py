@@ -26,6 +26,7 @@ from nl_pe.query_gen.q_gen import QueryGenerator
 import re
 import gc
 import subprocess
+import sys
 from nl_pe.utils.qrels import GTScorer
 from nl_pe.llm.ce import CEScorer
 from nl_pe.llm.prompter import Prompter
@@ -211,7 +212,7 @@ class ExperimentManager():
         csv_path = Path(self.exp_dir) / "trec_results.csv"
 
         search_cmd = [
-            "python", "-m", "pyserini.search.faiss",
+            sys.executable, "-m", "pyserini.search.faiss",
             "--index", index_name,
             "--topics", topics_name,
             "--encoder", encoder,
@@ -230,7 +231,7 @@ class ExperimentManager():
             )
 
         eval_cmd = [
-            "python", "-m", "pyserini.eval.trec_eval",
+            sys.executable, "-m", "pyserini.eval.trec_eval",
             "-c",
             "-mrecall.100",
             "-mndcg_cut.10",
@@ -1098,6 +1099,7 @@ if __name__ == "__main__":
     else:
         manager = ExperimentManager(args.exp_dir, skip_existing=args.skip_existing)
         manager.run_experiment(args.exp_type)
+
 
 
 
