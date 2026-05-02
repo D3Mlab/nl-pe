@@ -25,6 +25,7 @@ from nl_pe.gp_tests.inference import GPInference
 from nl_pe.query_gen.q_gen import QueryGenerator
 import re
 import gc
+import subprocess
 from nl_pe.utils.qrels import GTScorer
 from nl_pe.llm.ce import CEScorer
 from nl_pe.llm.prompter import Prompter
@@ -176,6 +177,122 @@ class ExperimentManager():
         self.logger.info(f"Starting hyperparam fitting in {self.exp_dir}")
         fitter = HyperpriorFitter(self.config)
         fitter.fit_all()
+
+    def colbert(self):
+        """
+        Run a simple Pyserini ColBERT-variant retrieval over a BEIR dataset and
+        record recall@100 / ndcg@10 to trec_results.csv in the experiment dir.
+
+        Required config:
+        logging:
+          level: INFO
+        data:
+          dataset_name: trec-covid  # any supported BEIR dataset in Pyserini prebuilt resources
+        """
+        self.logger.info("Starting ColBERT experiment...")
+
+        data_cfg = self.config.get("data", {})
+        dataset_name = data_cfg.get("dataset_name")
+        if not dataset_name:
+            raise ValueError("Missing required config value: data.dataset_name")
+
+        # Defaults chosen for a "simplest" ColBERT variant using Pyserini's
+        # prebuilt TCT-ColBERT-v2-HN+ Faiss index and encoder.
+        colbert_variant = data_cfg.get("colbert_variant", "tct_colbert-v2-hnp")
+        encoder = data_cfg.get("encoder", "castorini/tct_colbert-v2-hnp-msmarco")
+        hits = int(data_cfg.get("hits", 100))
+        batch_size = int(data_cfg.get("batch_size", 512))
+        threads = int(data_cfg.get("threads", 16))
+
+        index_name = data_cfg.get("index", f"beir-v1.0.0-{dataset_name}.{colbert_variant}")
+        topics_name = data_cfg.get("topics", f"beir-v1.0.0-{dataset_name}-test")
+
+        run_path = Path(self.exp_dir) / "colbert_run.trec"
+        csv_path = Path(self.exp_dir) / "trec_results.csv"
+
+        search_cmd = [
+            "python", "-m", "pyserini.search.faiss",
+            "--index", index_name,
+            "--topics", topics_name,
+            "--encoder", encoder,
+            "--output", str(run_path),
+            "--output-format", "trec",
+            "--hits", str(hits),
+            "--batch-size", str(batch_size),
+            "--threads", str(threads),
+        ]
+        self.logger.info("Running Pyserini Faiss search: %s", " ".join(search_cmd))
+        search_proc = subprocess.run(search_cmd, capture_output=True, text=True)
+        if search_proc.returncode != 0:
+            raise RuntimeError(
+                "Pyserini ColBERT search failed.\n"
+                f"STDOUT:\n{search_proc.stdout}\nSTDERR:\n{search_proc.stderr}"
+            )
+
+        eval_cmd = [
+            "python", "-m", "pyserini.eval.trec_eval",
+            "-c",
+            "-mrecall.100",
+            "-mndcg_cut.10",
+            topics_name,
+            str(run_path),
+        ]
+        self.logger.info("Running trec_eval: %s", " ".join(eval_cmd))
+        eval_proc = subprocess.run(eval_cmd, capture_output=True, text=True)
+        if eval_proc.returncode != 0:
+            raise RuntimeError(
+                "Pyserini trec_eval failed.\n"
+                f"STDOUT:\n{eval_proc.stdout}\nSTDERR:\n{eval_proc.stderr}"
+            )
+
+        recall_100 = None
+        ndcg_10 = None
+        for line in eval_proc.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 3:
+                metric_name = parts[0].strip()
+                metric_value = parts[-1].strip()
+                if metric_name in {"recall_100", "recall.100"}:
+                    recall_100 = float(metric_value)
+                elif metric_name in {"ndcg_cut_10", "ndcg_cut.10"}:
+                    ndcg_10 = float(metric_value)
+
+        if recall_100 is None or ndcg_10 is None:
+            raise RuntimeError(
+                "Could not parse recall@100 and ndcg@10 from trec_eval output.\n"
+                f"Output was:\n{eval_proc.stdout}"
+            )
+
+        write_header = not csv_path.exists()
+        with open(csv_path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if write_header:
+                writer.writerow([
+                    "dataset_name",
+                    "index",
+                    "topics",
+                    "encoder",
+                    "hits",
+                    "recall@100",
+                    "ndcg@10",
+                ])
+            writer.writerow([
+                dataset_name,
+                index_name,
+                topics_name,
+                encoder,
+                hits,
+                recall_100,
+                ndcg_10,
+            ])
+
+        self.logger.info(
+            "ColBERT done. dataset=%s recall@100=%.4f ndcg@10=%.4f csv=%s",
+            dataset_name,
+            recall_100,
+            ndcg_10,
+            csv_path,
+        )
 
     def tune_indep_gps(self):
         self.logger.info(f"Starting independent gp tuning in {self.exp_dir}")
@@ -981,5 +1098,6 @@ if __name__ == "__main__":
     else:
         manager = ExperimentManager(args.exp_dir, skip_existing=args.skip_existing)
         manager.run_experiment(args.exp_type)
+
 
 
