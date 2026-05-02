@@ -110,6 +110,77 @@ def make_two_metric_table(
     return "\n".join(lines)
 
 
+def make_std_two_metric_table(
+    *,
+    datasets: List[str],
+    dataset_names: List[str],
+    metric_str_l: str,
+    metric_str_r: str,
+    baseline_rows: List[str],
+    method_rows: List[str],
+    caption: str = "MAIN (STD)",
+    label: str = "tab:main_std",
+    table_env: str = "table*",
+    size_cmd: str = r"\small",
+) -> str:
+    """
+    Same interface as make_two_metric_table.
+
+    This function intentionally keeps identical call semantics so existing notebook
+    code can be reused by changing only the function name at the call-site.
+
+    The caller should provide rows already populated with std values.
+    """
+    return make_two_metric_table(
+        datasets=datasets,
+        dataset_names=dataset_names,
+        metric_str_l=metric_str_l,
+        metric_str_r=metric_str_r,
+        baseline_rows=baseline_rows,
+        method_rows=method_rows,
+        caption=caption,
+        label=label,
+        table_env=table_env,
+        size_cmd=size_cmd,
+    )
+
+
+def make_ci_two_metric_table(
+    *,
+    datasets: List[str],
+    dataset_names: List[str],
+    metric_str_l: str,
+    metric_str_r: str,
+    baseline_rows: List[str],
+    method_rows: List[str],
+    caption: str = "MAIN (95% CI)",
+    label: str = "tab:main_ci",
+    table_env: str = "table*",
+    size_cmd: str = r"\small",
+) -> str:
+    """
+    Same interface as make_two_metric_table.
+
+    Expects each numeric cell in baseline_rows/method_rows to already be formatted
+    as "<upper>/<lower>" (or "-") by the caller.
+
+    This keeps the call-site identical to make_two_metric_table except for the
+    function name.
+    """
+    return make_two_metric_table(
+        datasets=datasets,
+        dataset_names=dataset_names,
+        metric_str_l=metric_str_l,
+        metric_str_r=metric_str_r,
+        baseline_rows=baseline_rows,
+        method_rows=method_rows,
+        caption=caption,
+        label=label,
+        table_env=table_env,
+        size_cmd=size_cmd,
+    )
+
+
 def _format_table_number(value, dec_pts=1):
     if value is None or pd.isna(value):
         return "-"
@@ -516,6 +587,50 @@ def get_mean_at_k(dir_path, metric, k):
 
 
     return data[key] * 100
+
+
+def get_std_at_k(dir_path, metric, k):
+    """
+    Reads `all_queries_trec_eval_results.jsonl` from `dir_path`
+    and returns the value of `std_dev_<metric>_<k>`.
+    Example key: std_dev_P_1, std_dev_ndcg_cut_10, etc.
+    """
+    file_path = os.path.join(dir_path, "all_queries_trec_eval_results.jsonl")
+
+    if not os.path.exists(file_path):
+        print(f"{file_path} does not exist.")
+        return None
+
+    if metric in {'P', 'recall'}:
+        key = f"std_dev_{metric}_{k}"
+    else:
+        key = f"std_dev_{metric}_cut_{k}"
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if key not in data:
+        print(f"{key} not found in {file_path}.")
+        return None
+
+    return data[key] * 100
+
+
+def get_ci_at_k(dir_path, metric, k, dec_pts=1):
+    """
+    Returns CI text "<upper>/<lower>" using:
+        mean ± 1.96 * std_dev
+    from `all_queries_trec_eval_results.jsonl`.
+    """
+    mean_val = get_mean_at_k(dir_path, metric, k)
+    std_val = get_std_at_k(dir_path, metric, k)
+
+    if mean_val is None or std_val is None:
+        return None
+
+    upper = mean_val + 1.96 * std_val
+    lower = mean_val - 1.96 * std_val
+    return f"{upper:.{dec_pts}f}/{lower:.{dec_pts}f}"
 
 
 def make_two_metric_table_q_dec(
