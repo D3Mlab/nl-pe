@@ -633,6 +633,108 @@ def get_ci_at_k(dir_path, metric, k, dec_pts=1):
     return f"{upper:.{dec_pts}f}/{lower:.{dec_pts}f}"
 
 
+def _bootstrap_metric_column(metric, k):
+    """
+    Map (metric, k) to bootstrap.csv column names.
+
+    Current expected bootstrap column pattern:
+        mean_<metric>_<k>
+    e.g., mean_ndcg_10, mean_recall_100
+    """
+    return f"mean_{metric}_{k}"
+
+
+def get_bootstrap_ci_range_at_k(dir_path, metric, k, conf_level=0.95):
+    """
+    Reads bootstrap.csv from dir_path and returns (lower, upper) percentile bounds
+    for mean_<metric>_<k> values. Returned values are scaled to percentage.
+
+    If file/column/data is missing, returns None.
+    """
+    file_path = os.path.join(dir_path, "bootstrap.csv")
+    if not os.path.exists(file_path):
+        print(f"{file_path} does not exist.")
+        return None
+
+    if conf_level <= 0 or conf_level >= 1:
+        raise ValueError("conf_level must be in (0, 1).")
+
+    col = _bootstrap_metric_column(metric, k)
+
+    try:
+        df = pd.read_csv(file_path)
+    except Exception as e:
+        print(f"Failed to read {file_path}: {e}")
+        return None
+
+    if col not in df.columns:
+        print(f"{col} not found in {file_path}.")
+        return None
+
+    vals = pd.to_numeric(df[col], errors="coerce").dropna()
+    if vals.empty:
+        print(f"No valid numeric bootstrap values for {col} in {file_path}.")
+        return None
+
+    alpha = 1.0 - conf_level
+    lower_q = alpha / 2.0
+    upper_q = 1.0 - (alpha / 2.0)
+
+    lower = float(vals.quantile(lower_q)) * 100
+    upper = float(vals.quantile(upper_q)) * 100
+    return lower, upper
+
+
+def get_bootstrap_ci_text_at_k(dir_path, metric, k, conf_level=0.95, dec_pts=1):
+    """
+    Returns "<lower>/<upper>" from bootstrap percentiles for the requested metric@k.
+    """
+    bounds = get_bootstrap_ci_range_at_k(
+        dir_path,
+        metric,
+        k,
+        conf_level=conf_level,
+    )
+    if bounds is None:
+        return None
+
+    lower, upper = bounds
+    return f"{lower:.{dec_pts}f}/{upper:.{dec_pts}f}"
+
+
+def make_bootstrap_range_table(
+    *,
+    datasets: List[str],
+    dataset_names: List[str],
+    metric_str_l: str,
+    metric_str_r: str,
+    baseline_rows: List[str],
+    method_rows: List[str],
+    caption: str = "MAIN (Bootstrap CI)",
+    label: str = "tab:main_bootstrap_ci",
+    table_env: str = "table*",
+    size_cmd: str = r"\small",
+) -> str:
+    """
+    Same interface as make_two_metric_table.
+
+    Expects each numeric cell in baseline_rows/method_rows to already be formatted
+    as "<lower>/<upper>" (or "-") by the caller.
+    """
+    return make_two_metric_table(
+        datasets=datasets,
+        dataset_names=dataset_names,
+        metric_str_l=metric_str_l,
+        metric_str_r=metric_str_r,
+        baseline_rows=baseline_rows,
+        method_rows=method_rows,
+        caption=caption,
+        label=label,
+        table_env=table_env,
+        size_cmd=size_cmd,
+    )
+
+
 def make_two_metric_table_q_dec(
     *,
     datasets: List[str],
