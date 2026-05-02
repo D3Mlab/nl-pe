@@ -645,6 +645,157 @@ class EvalManager:
         except Exception as e:
             self.logger.error(f"Error writing times.csv: {e}")
 
+    def _load_bootstrap_query_metrics(self):
+        """
+        Load per-query ndcg@10 and recall@100 from each query's
+        trec_results_deduplicated.txt exactly once.
+        """
+        if not self.results_dir.exists():
+            self.logger.error(f"Per query results directory {self.results_dir} does not exist")
+            return {}
+
+        evaluator = pytrec_eval.RelevanceEvaluator(self.qrels_dict, {"ndcg_cut.10", "recall.100"})
+        query_metrics = {}
+
+        for query_dir in self.results_dir.iterdir():
+            if not query_dir.is_dir():
+                continue
+
+            qid = query_dir.name
+            dedup_trec_path = query_dir / "trec_results_deduplicated.txt"
+
+            if not dedup_trec_path.exists() or dedup_trec_path.stat().st_size == 0:
+                self.logger.warning(
+                    f"Bootstrap: skipping query {qid} because {dedup_trec_path} is missing/empty."
+                )
+                continue
+
+            try:
+                with open(dedup_trec_path, "r", encoding="utf-8") as f:
+                    dedup_lines = f.readlines()
+
+                run = pytrec_eval.parse_run(dedup_lines)
+                if qid not in run:
+                    self.logger.warning(
+                        f"Bootstrap: skipping query {qid} because parsed run has no matching qid."
+                    )
+                    continue
+
+                eval_result = evaluator.evaluate(run)
+                if qid not in eval_result:
+                    self.logger.warning(
+                        f"Bootstrap: skipping query {qid} because evaluation returned no result for this qid."
+                    )
+                    continue
+
+                query_metrics[qid] = {
+                    "ndcg_10": eval_result[qid].get("ndcg_cut_10"),
+                    "recall_100": eval_result[qid].get("recall_100"),
+                }
+            except Exception as e:
+                self.logger.warning(
+                    f"Bootstrap: skipping corrupt query {qid} at {dedup_trec_path}: {e}"
+                )
+
+        return query_metrics
+
+    def _read_existing_bootstrap_ids(self, bootstrap_csv_path):
+        existing_ids = set()
+
+        if not bootstrap_csv_path.exists():
+            return existing_ids
+
+        try:
+            with open(bootstrap_csv_path, "r", newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    raw_id = row.get("bootstrap_id")
+                    if raw_id is None:
+                        continue
+                    try:
+                        existing_ids.add(int(raw_id))
+                    except (TypeError, ValueError):
+                        self.logger.warning(
+                            f"Bootstrap CSV has non-integer bootstrap_id '{raw_id}', ignoring row."
+                        )
+        except Exception as e:
+            self.logger.warning(f"Failed reading existing bootstrap CSV at {bootstrap_csv_path}: {e}")
+
+        return existing_ids
+
+    def run_bootstrap_eval(self, num_bootstraps):
+        if num_bootstraps is None or num_bootstraps <= 0:
+            self.logger.info("Bootstrap disabled or non-positive bootstrap count provided; nothing to run.")
+            return
+
+        query_metrics = self._load_bootstrap_query_metrics()
+        available_qids = sorted(query_metrics.keys())
+
+        if not available_qids:
+            self.logger.error("Bootstrap: no valid query metrics available. Aborting bootstrap evaluation.")
+            return
+
+        bootstrap_csv_path = Path(self.eval_dir) / "bootstrap.csv"
+        existing_ids = self._read_existing_bootstrap_ids(bootstrap_csv_path)
+        max_existing_id = max(existing_ids) if existing_ids else 0
+
+        if max_existing_id >= num_bootstraps:
+            self.logger.info(
+                f"Bootstrap CSV already contains bootstrap ids up to {max_existing_id}, "
+                f"which is >= requested num_bootstraps={num_bootstraps}. Nothing to do."
+            )
+            return
+
+        file_exists = bootstrap_csv_path.exists()
+        with open(bootstrap_csv_path, "a", newline="", encoding="utf-8") as csvfile:
+            fieldnames = ["bootstrap_id", "mean_ndcg_10", "mean_recall_100"]
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+            if (not file_exists) or bootstrap_csv_path.stat().st_size == 0:
+                writer.writeheader()
+
+            rng = np.random.default_rng(42)
+            n_qids = len(available_qids)
+
+            for bootstrap_id in range(1, num_bootstraps + 1):
+                sampled_qids = rng.choice(available_qids, size=n_qids, replace=True)
+
+                if bootstrap_id <= max_existing_id:
+                    continue
+
+                ndcg_values = []
+                recall_values = []
+
+                for qid in sampled_qids:
+                    try:
+                        metrics = query_metrics.get(qid, {})
+                        ndcg = metrics.get("ndcg_10")
+                        recall = metrics.get("recall_100")
+
+                        if ndcg is not None:
+                            ndcg_values.append(float(ndcg))
+                        if recall is not None:
+                            recall_values.append(float(recall))
+                    except Exception:
+                        # Ignore this sampled query for aggregation if anything goes wrong.
+                        continue
+
+                mean_ndcg_10 = float(np.mean(ndcg_values)) if ndcg_values else None
+                mean_recall_100 = float(np.mean(recall_values)) if recall_values else None
+
+                writer.writerow(
+                    {
+                        "bootstrap_id": bootstrap_id,
+                        "mean_ndcg_10": mean_ndcg_10,
+                        "mean_recall_100": mean_recall_100,
+                    }
+                )
+
+                self.logger.info(
+                    f"Bootstrap {bootstrap_id}: mean_ndcg_10={mean_ndcg_10}, "
+                    f"mean_recall_100={mean_recall_100}"
+                )
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate an experiment based on a config file.")
@@ -660,6 +811,13 @@ if __name__ == "__main__":
             "already exists in the eval directory."
         ),
     )
+    parser.add_argument(
+        "-b",
+        "--bootstrap",
+        type=int,
+        default=None,
+        help="Run bootstrap-only evaluation with the given number of bootstraps.",
+    )
     args = parser.parse_args()
 
     eval_manager = EvalManager(
@@ -668,4 +826,7 @@ if __name__ == "__main__":
         do_times=args.times,
         skip_trec=args.skip_trec,
     )
-    eval_manager.evaluate_experiment()
+    if args.bootstrap is not None:
+        eval_manager.run_bootstrap_eval(args.bootstrap)
+    else:
+        eval_manager.evaluate_experiment()
